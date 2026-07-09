@@ -13,6 +13,9 @@ import {
   TrendingUp,
   BarChart3,
   History,
+  ArrowUp,
+  ArrowDown,
+  Minus,
 } from 'lucide-react'
 import {
   LineChart,
@@ -101,111 +104,177 @@ function StatCard({
 }) {
   return (
     <Card>
-      <CardContent className="p-4 sm:p-5">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <p className="text-xs sm:text-sm text-muted-foreground truncate">{label}</p>
-            <p className="text-2xl sm:text-3xl font-semibold mt-1 tabular-nums">{value}</p>
-            {hint ? <p className="text-xs text-muted-foreground mt-1 truncate">{hint}</p> : null}
+      <CardContent className="p-3">
+        <div className="flex items-center gap-3">
+          <div className="shrink-0 rounded-md bg-muted p-1.5 text-muted-foreground">{icon}</div>
+          <div className="min-w-0 flex-1">
+            <p className="text-[11px] text-muted-foreground truncate leading-tight">{label}</p>
+            <p className="text-xl font-semibold tabular-nums leading-tight">{value}</p>
+            {hint ? <p className="text-[10px] text-muted-foreground truncate leading-tight">{hint}</p> : null}
           </div>
-          <div className="shrink-0 rounded-lg bg-muted p-2 sm:p-2.5 text-muted-foreground">{icon}</div>
         </div>
       </CardContent>
     </Card>
   )
 }
 
+/**
+ * Вычислить тренд по типу топлива между предыдущим и текущим снапшотом.
+ * Возвращает: 'up' | 'down' | 'stable' | 'new' | null
+ *   up     — запас вырос (Δ > 0)
+ *   down   — запас упал (Δ < 0)
+ *   stable — без изменений (Δ = 0)
+ *   new    — топлива не было, теперь появилось
+ *   null   — недостаточно данных для сравнения
+ */
+function computeTrend(
+  current: { fuel: string; liters: number | null } | undefined,
+  previous: { fuel: string; liters: number | null } | undefined,
+): { direction: 'up' | 'down' | 'stable' | 'new'; delta: number } | null {
+  if (!current) return null
+  if (current.liters == null) return null
+  if (!previous) return { direction: 'new', delta: current.liters }
+  const prevFuel = previous.fuels?.find((f) => f.fuel === current.fuel)
+  if (!prevFuel || prevFuel.liters == null) return { direction: 'new', delta: current.liters }
+  const delta = current.liters - prevFuel.liters
+  if (delta > 0) return { direction: 'up', delta }
+  if (delta < 0) return { direction: 'down', delta }
+  return { direction: 'stable', delta: 0 }
+}
+
+function TrendIcon({ trend }: { trend: { direction: string; delta: number } | null }) {
+  if (!trend) return null
+  const size = 'w-3 h-3'
+  if (trend.direction === 'up') {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-emerald-600 dark:text-emerald-400" title={`+${trend.delta.toLocaleString('ru-RU')} л`}>
+        <ArrowUp className={size} />
+        <span className="text-[10px] tabular-nums">+{trend.delta.toLocaleString('ru-RU')}</span>
+      </span>
+    )
+  }
+  if (trend.direction === 'down') {
+    return (
+      <span className="inline-flex items-center gap-0.5 text-red-600 dark:text-red-400" title={`${trend.delta.toLocaleString('ru-RU')} л`}>
+        <ArrowDown className={size} />
+        <span className="text-[10px] tabular-nums">{trend.delta.toLocaleString('ru-RU')}</span>
+      </span>
+    )
+  }
+  if (trend.direction === 'stable') {
+    return (
+      <span className="inline-flex items-center text-muted-foreground" title="Без изменений">
+        <Minus className={size} />
+      </span>
+    )
+  }
+  // new
+  return (
+    <span className="inline-flex items-center text-blue-600 dark:text-blue-400" title="Новое топливо">
+      <ArrowUp className={size} />
+    </span>
+  )
+}
+
 function StationCard({ s, onShowHistory }: { s: Station; onShowHistory?: (s: Station) => void }) {
-  const isActive = s.status === 'Да'
+  const hasFuel = s.availabilityFuel
   const fuels = s.latestSnapshot?.parsedFuels?.fuels || []
   const comment = s.latestSnapshot?.parsedFuels?.comment
+  const prevFuels = s.previousSnapshot?.parsedFuels?.fuels
+
+  // Карточка с цветной рамкой: зелёная — есть топливо, серая — нет
+  const cardClass = hasFuel
+    ? 'border-emerald-500/60 bg-emerald-50/40 dark:bg-emerald-950/10'
+    : 'border-muted bg-muted/20 dark:bg-muted/10 opacity-75'
+
   return (
-    <Card className="overflow-hidden">
-      <CardHeader className="pb-3">
-        <div className="flex items-start justify-between gap-2">
-          <div className="flex gap-3 min-w-0 flex-1">
-            {s.logoUrl ? (
-              <img
-                src={s.logoUrl}
-                alt={s.brand}
-                className="w-10 h-10 object-contain shrink-0 rounded border bg-white p-1"
-                onError={(e) => {
-                  // если логотип не загрузился — скрываем
-                  ;(e.currentTarget as HTMLImageElement).style.display = 'none'
-                }}
-              />
-            ) : (
-              <div className="w-10 h-10 rounded bg-muted flex items-center justify-center shrink-0">
-                <Fuel className="w-5 h-5 text-muted-foreground" />
-              </div>
-            )}
-            <div className="min-w-0">
-              <CardTitle className="text-base flex items-center gap-2 flex-wrap">
-                <span className="truncate">{s.brand || 'Без бренда'}</span>
-                <Badge variant={isActive ? 'default' : 'secondary'} className="shrink-0">
-                  {isActive ? 'Работает' : 'Нет данных'}
-                </Badge>
-              </CardTitle>
-              <CardDescription className="flex items-center gap-1.5 mt-1 text-sm">
-                <MapPin className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate">{s.address || 'адрес не указан'}</span>
-              </CardDescription>
-            </div>
+    <Card className={`overflow-hidden transition-all hover:shadow-md ${cardClass}`}>
+      {/* Компактная шапка: логотип + название + статус + время */}
+      <div className="p-3 pb-2 flex items-start gap-2">
+        {s.logoUrl ? (
+          <img
+            src={s.logoUrl}
+            alt={s.brand}
+            className="w-8 h-8 object-contain shrink-0 rounded border bg-white p-0.5"
+            onError={(e) => {
+              ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+            }}
+          />
+        ) : (
+          <div className="w-8 h-8 rounded bg-muted flex items-center justify-center shrink-0">
+            <Fuel className="w-4 h-4 text-muted-foreground" />
           </div>
-          <div className="text-right shrink-0">
-            <p className="text-xs text-muted-foreground">обновлено</p>
-            <p className="text-xs font-medium tabular-nums">
-              {s.latestSnapshot ? fmtRelative(s.latestSnapshot.sourceUpdatedAt || s.latestSnapshot.fetchedAt) : '—'}
-            </p>
-          </div>
+        )}
+        <div className="min-w-0 flex-1">
+          <p className="text-sm font-semibold leading-tight truncate">
+            {s.brand || 'Без бренда'}
+          </p>
+          <p className="text-xs text-muted-foreground truncate flex items-center gap-1 mt-0.5">
+            <MapPin className="w-3 h-3 shrink-0" />
+            <span className="truncate">{s.address || '—'}</span>
+          </p>
         </div>
-      </CardHeader>
-      <CardContent className="pt-0">
+        <div className="shrink-0 text-right">
+          <div className={`w-2 h-2 rounded-full mb-1 ml-auto ${hasFuel ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`} />
+          <p className="text-[10px] text-muted-foreground tabular-nums">
+            {s.latestSnapshot ? fmtRelative(s.latestSnapshot.sourceUpdatedAt || s.latestSnapshot.fetchedAt) : '—'}
+          </p>
+        </div>
+      </div>
+
+      {/* Топливо: компактные чипы с трендами */}
+      <div className="px-3 pb-2">
         {fuels.length > 0 ? (
-          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
-            {fuels.map((f, i) => (
-              <div
-                key={i}
-                className="rounded-md border bg-muted/40 px-3 py-2"
-              >
-                <p className="text-xs text-muted-foreground">{fmtFuelName(f.fuel)}</p>
-                <p className="text-base font-semibold tabular-nums">
-                  {f.liters != null ? `${f.liters.toLocaleString('ru-RU')} л` : '—'}
-                </p>
-                {f.cars != null ? (
-                  <p className="text-xs text-muted-foreground tabular-nums">{f.cars} машин</p>
-                ) : null}
-              </div>
-            ))}
+          <div className="grid grid-cols-3 gap-1.5">
+            {fuels.map((f, i) => {
+              const trend = computeTrend(
+                { fuel: f.fuel, liters: f.liters },
+                { fuel: f.fuel, liters: prevFuels?.find((pf) => pf.fuel === f.fuel)?.liters ?? null },
+              )
+              const isOut = f.liters === 0
+              return (
+                <div
+                  key={i}
+                  className={`rounded px-2 py-1.5 text-center border ${
+                    isOut
+                      ? 'bg-red-50 dark:bg-red-950/20 border-red-200 dark:border-red-900'
+                      : 'bg-background border-border'
+                  }`}
+                >
+                  <p className="text-[10px] text-muted-foreground leading-none">{fmtFuelName(f.fuel)}</p>
+                  <p className={`text-sm font-semibold tabular-nums leading-tight mt-0.5 ${isOut ? 'text-red-600 dark:text-red-400' : ''}`}>
+                    {f.liters != null ? f.liters.toLocaleString('ru-RU') : '—'}
+                  </p>
+                  <div className="h-3 flex items-center justify-center">
+                    <TrendIcon trend={trend} />
+                  </div>
+                </div>
+              )
+            })}
           </div>
         ) : (
-          <p className="text-sm text-muted-foreground italic">Нет данных об остатках</p>
+          <p className="text-xs text-muted-foreground italic text-center py-2">
+            Нет данных об остатках
+          </p>
         )}
 
         {comment ? (
-          <p className="text-xs text-muted-foreground mt-3 p-2 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900">
+          <p className="text-[11px] text-muted-foreground mt-2 p-1.5 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900">
             {comment}
           </p>
         ) : null}
+      </div>
 
-        {s.latestSnapshot?.rawDetails && !comment && fuels.length === 0 ? (
-          <p className="text-xs text-muted-foreground mt-3 whitespace-pre-wrap font-mono bg-muted/40 p-2 rounded">
-            {s.latestSnapshot.rawDetails}
-          </p>
-        ) : null}
-
-        {onShowHistory ? (
-          <Button
-            variant="ghost"
-            size="sm"
-            className="mt-3 w-full"
-            onClick={() => onShowHistory(s)}
-          >
-            <History className="w-4 h-4 mr-2" />
-            История остатков
-          </Button>
-        ) : null}
-      </CardContent>
+      {/* Компактная кнопка истории */}
+      {onShowHistory && fuels.length > 0 ? (
+        <button
+          onClick={() => onShowHistory(s)}
+          className="w-full text-[11px] text-muted-foreground hover:text-foreground hover:bg-muted/50 py-1.5 border-t transition-colors flex items-center justify-center gap-1"
+        >
+          <History className="w-3 h-3" />
+          История
+        </button>
+      ) : null}
     </Card>
   )
 }
@@ -614,58 +683,56 @@ function StationsPanel() {
   }
 
   return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center gap-3">
-          <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
-            <Input
-              placeholder="Поиск по бренду или адресу…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="sm:col-span-1"
-            />
-            <Select value={brandFilter} onValueChange={setBrandFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="Все бренды" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Все бренды ({stats?.brands.reduce((a, b) => a + b.count, 0) ?? stations.length})</SelectItem>
-                {brands.map((b) => (
-                  <SelectItem key={b} value={b}>
-                    {b}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-            <Select value={statusFilter} onValueChange={setStatusFilter}>
-              <SelectTrigger>
-                <SelectValue placeholder="Все статусы" />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="all">Все статусы</SelectItem>
+    <div className="space-y-3">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
+        <div className="flex-1 grid grid-cols-1 sm:grid-cols-3 gap-2">
+          <Input
+            placeholder="Поиск по бренду или адресу…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            className="h-8 text-sm"
+          />
+          <Select value={brandFilter} onValueChange={setBrandFilter}>
+            <SelectTrigger className="h-8 text-sm">
+              <SelectValue placeholder="Все бренды" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все бренды ({stats?.brands.reduce((a, b) => a + b.count, 0) ?? stations.length})</SelectItem>
+              {brands.map((b) => (
+                <SelectItem key={b} value={b}>
+                  {b}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select value={statusFilter} onValueChange={setStatusFilter}>
+            <SelectTrigger className="h-8 text-sm">
+              <SelectValue placeholder="Все статусы" />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value="all">Все статусы</SelectItem>
                 <SelectItem value="active">Только работающие</SelectItem>
                 <SelectItem value="inactive">Только неработающие</SelectItem>
               </SelectContent>
             </Select>
           </div>
-          <Button onClick={handleRefresh} disabled={refreshing} className="shrink-0">
-            <RefreshCw className={`w-4 h-4 mr-2 ${refreshing ? 'animate-spin' : ''}`} />
+          <Button onClick={handleRefresh} disabled={refreshing} size="sm" className="shrink-0 h-8">
+            <RefreshCw className={`w-3.5 h-3.5 mr-1.5 ${refreshing ? 'animate-spin' : ''}`} />
             {refreshing ? 'Опрос…' : 'Обновить'}
           </Button>
-        </CardContent>
-      </Card>
+        </div>
 
       {error ? (
         <Card>
-          <CardContent className="p-4 text-sm text-red-600">{error}</CardContent>
+          <CardContent className="p-3 text-sm text-red-600">{error}</CardContent>
         </Card>
       ) : null}
 
       {loading ? (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          {[1, 2, 3, 4].map((i) => (
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
+          {[1, 2, 3, 4, 5, 6].map((i) => (
             <Card key={i}>
-              <CardContent className="p-6">
+              <CardContent className="p-4">
                 <div className="h-4 bg-muted rounded animate-pulse mb-3" />
                 <div className="h-3 bg-muted rounded animate-pulse mb-2 w-2/3" />
                 <div className="h-20 bg-muted rounded animate-pulse" />
@@ -684,7 +751,7 @@ function StationsPanel() {
           </CardContent>
         </Card>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2.5">
           {filtered.map((s) => (
             <StationCard key={s.id} s={s} onShowHistory={setHistoryStation} />
           ))}
@@ -984,16 +1051,15 @@ export default function HomePage() {
     <div className="min-h-screen flex flex-col bg-background">
       <Toaster richColors position="top-right" />
       <header className="border-b bg-card sticky top-0 z-10">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 sm:py-4 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-3 min-w-0">
-            <div className="rounded-lg bg-emerald-600 text-white p-2 shrink-0">
-              <Fuel className="w-5 h-5" />
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 flex items-center justify-between gap-3">
+          <div className="flex items-center gap-2 min-w-0">
+            <div className="rounded-md bg-emerald-600 text-white p-1.5 shrink-0">
+              <Fuel className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <h1 className="text-base sm:text-lg font-semibold truncate">АЗС Вологда — топливо</h1>
-              <p className="text-xs text-muted-foreground truncate">
-                Источник: 3d-geoportal.vologda-city.ru · обновлено{' '}
-                {fmtRelative(stats?.lastRefreshAt ?? null)}
+              <h1 className="text-sm font-semibold truncate leading-tight">АЗС Вологда — топливо</h1>
+              <p className="text-[10px] text-muted-foreground truncate leading-tight">
+                обновлено {fmtRelative(stats?.lastRefreshAt ?? null)}
               </p>
             </div>
           </div>
@@ -1021,33 +1087,30 @@ export default function HomePage() {
         </div>
       </header>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
+      <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-4 py-3 sm:py-4 space-y-3">
         {stats && stats.cookieStatus === 'alive' ? (
-          <Card className="border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-950/20">
-            <CardContent className="p-3 flex items-center gap-3">
-              <div className="shrink-0 rounded-full bg-emerald-100 dark:bg-emerald-900 p-1.5 text-emerald-600 dark:text-emerald-300">
-                <svg
-                  xmlns="http://www.w3.org/2000/svg"
-                  width="16"
-                  height="16"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="3"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                >
-                  <polyline points="20 6 9 17 4 12"></polyline>
-                </svg>
-              </div>
-              <p className="text-sm text-emerald-700 dark:text-emerald-300">
-                Источник данных: <strong>platforma35.ru</strong> (публичный API, без авторизации).
-                <span className="text-emerald-600 dark:text-emerald-400 ml-2 text-xs">
-                  Последний опрос: {fmtRelative(stats.lastRefreshAt)}
-                </span>
-              </p>
-            </CardContent>
-          </Card>
+          <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 text-xs">
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              width="14"
+              height="14"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="3"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+              className="shrink-0"
+            >
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            <span>
+              Источник: <strong>platforma35.ru</strong>
+              <span className="text-emerald-600/80 dark:text-emerald-400/80 ml-2">
+                · опрос: {fmtRelative(stats.lastRefreshAt)}
+              </span>
+            </span>
+          </div>
         ) : null}
 
         {stats && stats.cookieStatus === 'expired' ? (
@@ -1072,66 +1135,46 @@ export default function HomePage() {
           </Card>
         ) : null}
 
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2">
           <StatCard
-            icon={<Fuel className="w-5 h-5" />}
+            icon={<Fuel className="w-4 h-4" />}
             label="Всего АЗС"
             value={stats?.totalStations ?? '—'}
-            hint="обнаружено на геопортале"
+            hint="в Вологде"
           />
           <StatCard
-            icon={<Zap className="w-5 h-5" />}
-            label="Работает сейчас"
+            icon={<Zap className="w-4 h-4" />}
+            label="С топливом"
             value={stats?.activeStations ?? '—'}
-            hint={`из ${stats?.totalStations ?? 0} известных`}
+            hint={`из ${stats?.totalStations ?? 0}`}
           />
           <StatCard
-            icon={<Layers className="w-5 h-5" />}
-            label="Coverage-точек"
-            value={stats?.enabledPoints ?? '—'}
-            hint={`из ${stats?.totalPoints ?? 0} настроенных`}
-          />
-          <StatCard
-            icon={<Activity className="w-5 h-5" />}
-            label="Снапшотов в БД"
+            icon={<History className="w-4 h-4" />}
+            label="Снапшотов"
             value={stats?.totalSnapshots ?? '—'}
-            hint="история остатков"
+            hint="история в БД"
+          />
+          <StatCard
+            icon={<Activity className="w-4 h-4" />}
+            label="Последний опрос"
+            value={fmtRelative(stats?.lastRefreshAt ?? null)}
+            hint={stats?.cookieStatus === 'alive' ? 'источник: platforma35' : 'источник недоступен'}
           />
         </div>
 
-        {stats && stats.brands.length > 0 ? (
-          <Card>
-            <CardContent className="p-3 sm:p-4">
-              <div className="flex flex-wrap items-center gap-2">
-                <span className="text-sm text-muted-foreground mr-1">Бренды:</span>
-                {stats.brands.map((b) => (
-                  <Badge key={b.brand} variant="outline" className="gap-1">
-                    {b.brand || 'Без бренда'}
-                    <span className="text-muted-foreground tabular-nums">{b.count}</span>
-                  </Badge>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        ) : null}
-
         <Tabs defaultValue="stations" className="w-full">
-          <TabsList className="w-full sm:w-auto grid grid-cols-4 sm:flex">
+          <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:flex">
             <TabsTrigger value="stations">АЗС</TabsTrigger>
             <TabsTrigger value="analytics">Аналитика</TabsTrigger>
-            <TabsTrigger value="coverage">Coverage-точки</TabsTrigger>
             <TabsTrigger value="settings">Настройки</TabsTrigger>
           </TabsList>
-          <TabsContent value="stations" className="mt-4">
+          <TabsContent value="stations" className="mt-3">
             <StationsPanel />
           </TabsContent>
-          <TabsContent value="analytics" className="mt-4">
+          <TabsContent value="analytics" className="mt-3">
             <AnalyticsPanel />
           </TabsContent>
-          <TabsContent value="coverage" className="mt-4">
-            <CoveragePanel />
-          </TabsContent>
-          <TabsContent value="settings" className="mt-4">
+          <TabsContent value="settings" className="mt-3">
             <SettingsPanel />
           </TabsContent>
         </Tabs>

@@ -34,18 +34,24 @@ export async function GET(req: NextRequest) {
     take: 500,
   })
 
-  // достаём последний снапшот для каждой станции
+  // достаём последние 2 снапшота для каждой станции (для трендов)
   const snapshots = await db.fuelSnapshot.findMany({
     where: { stationId: { in: stations.map((s) => s.id) } },
     orderBy: { fetchedAt: 'desc' },
   })
   const latestByStation = new Map<string, (typeof snapshots)[number]>()
+  const previousByStation = new Map<string, (typeof snapshots)[number]>()
   for (const sn of snapshots) {
-    if (!latestByStation.has(sn.stationId)) latestByStation.set(sn.stationId, sn)
+    if (!latestByStation.has(sn.stationId)) {
+      latestByStation.set(sn.stationId, sn)
+    } else if (!previousByStation.has(sn.stationId)) {
+      previousByStation.set(sn.stationId, sn)
+    }
   }
 
   const result = stations.map((s) => {
     const latest = latestByStation.get(s.id)
+    const previous = previousByStation.get(s.id)
     return {
       id: s.id,
       externalId: s.externalId,
@@ -68,6 +74,14 @@ export async function GET(req: NextRequest) {
             sourceCreatedAt: latest.sourceCreatedAt,
             sourceUpdatedAt: latest.sourceUpdatedAt,
             fetchedAt: latest.fetchedAt,
+          }
+        : null,
+      previousSnapshot: previous
+        ? {
+            id: previous.id,
+            parsedFuels: JSON.parse(previous.parsedFuels),
+            sourceUpdatedAt: previous.sourceUpdatedAt,
+            fetchedAt: previous.fetchedAt,
           }
         : null,
     }

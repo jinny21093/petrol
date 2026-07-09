@@ -32,6 +32,7 @@ export interface Station {
   availabilityFuel: boolean
   updatedAt: string
   latestSnapshot: StationSnapshot | null
+  previousSnapshot: StationSnapshot | null
 }
 
 export interface CoveragePoint {
