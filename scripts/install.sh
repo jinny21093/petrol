@@ -3,24 +3,36 @@
 # install.sh — автоматическая установка дашборда АЗС Вологды на чистой Ubuntu 22.04
 #
 # Запуск (с sudo):
-#   sudo bash install.sh <DOMAIN> [REPO_URL] [INSTALL_DIR]
+#   sudo bash install.sh <DOMAIN_OR_IP> [REPO_URL] [INSTALL_DIR]
 #
-# Пример:
+# Примеры:
+#   # С доменом (HTTPS автоматически через Let's Encrypt):
 #   sudo bash install.sh azs.example.ru
-#   sudo bash install.sh azs.example.ru https://github.com/jinny21093/petrol.git /var/www/vologda-azs
+#
+#   # С IP-адресом (HTTP-only, без HTTPS — для локалки/ZeroTier):
+#   sudo bash install.sh 10.147.17.248
+#
+#   # Явно отключить HTTPS, даже если передан домен:
+#   sudo bash install.sh my-server.local --no-https
+#
+#   # Свой репо и папка установки:
+#   sudo bash install.sh 10.147.17.248 https://github.com/jinny21093/petrol.git /var/www/vologda-azs
 #
 # Что делает:
-#   1. Ставит Node.js 20 LTS, pnpm, PM2, Caddy, git, sqlite3
+#   1. Ставит Node.js 20 LTS, pnpm, PM2, Caddy, git, sqlite3, cron
 #   2. Клонирует репо в INSTALL_DIR (по умолчанию /var/www/vologda-azs)
 #   3. Создаёт .env с абсолютным путём к SQLite
 #   4. Заливает схему БД
 #   5. Собирает Next.js standalone
 #   6. Регистрирует приложение в PM2 + автозапуск через systemd
-#   7. Генерирует Caddyfile под ваш домен + перезагружает Caddy (авто-HTTPS)
-#   8. Ставит cron-задачу автообновления каждые 10 минут
-#   9. Создаёт папку бэкапов + cron-бэкап БД на 14 дней
+#   7. Генерирует Caddyfile:
+#      • если DOMAIN это IP — режим HTTP-only на порту 80 (без HTTPS)
+#      • если DOMAIN это домен — режим HTTPS с авто-сертификатом Let's Encrypt
+#   8. Открывает порт 80 в ufw и разрешает ZeroTier-интерфейсы (в режиме IP)
+#   9. Ставит cron-задачу автообновления каждые 10 минут
+#  10. Создаёт папку бэкапов + cron-бэкап БД на 14 дней
 #
-# После успешной установки откройте https://<DOMAIN> в браузере.
+# После успешной установки откройте http(s)://<DOMAIN_OR_IP> в браузере.
 # JSESSIONID нужно будет вставить вручную через таб «Настройки».
 #
 
@@ -40,17 +52,41 @@ err()  { echo -e "${RED}[$(date +%H:%M:%S)] ✗${NC} $*" >&2; }
 
 # -------- Проверка аргументов --------
 if [[ $# -lt 1 ]]; then
-    err "Использование: sudo bash install.sh <DOMAIN> [REPO_URL] [INSTALL_DIR]"
-    err "Пример: sudo bash install.sh azs.example.ru"
+    err "Использование: sudo bash install.sh <DOMAIN_OR_IP> [REPO_URL] [INSTALL_DIR] [--no-https]"
+    err "Пример: sudo bash install.sh 10.147.17.248"
+    err "        sudo bash install.sh azs.example.ru"
     exit 1
 fi
 
 DOMAIN="$1"
-REPO_URL="${2:-https://github.com/jinny21093/petrol.git}"
-INSTALL_DIR="${3:-/var/www/vologda-azs}"
 APP_NAME="vologda-azs"
 NODE_MAJOR=20
 REFRESH_INTERVAL_MIN="${REFRESH_INTERVAL_MIN:-10}"
+
+# Парсим остальные аргументы — ищем REPO_URL, INSTALL_DIR и флаг --no-https
+FORCE_NO_HTTPS=false
+REPO_URL="https://github.com/jinny21093/petrol.git"
+INSTALL_DIR="/var/www/vologda-azs"
+POSITIONAL_ARGS=()
+for arg in "${@:2}"; do
+    case "$arg" in
+        --no-https)
+            FORCE_NO_HTTPS=true
+            ;;
+        --*)
+            warn "Неизвестный флаг: $arg (игнорируется)"
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$arg")
+            ;;
+    esac
+done
+if [[ ${#POSITIONAL_ARGS[@]} -ge 1 ]]; then
+    REPO_URL="${POSITIONAL_ARGS[0]}"
+fi
+if [[ ${#POSITIONAL_ARGS[@]} -ge 2 ]]; then
+    INSTALL_DIR="${POSITIONAL_ARGS[1]}"
+fi
 
 # Проверка рута
 if [[ $EUID -ne 0 ]]; then
@@ -216,15 +252,70 @@ fi
 
 ok "  Приложение запущено: http://127.0.0.1:3000"
 
-# -------- 8. Настройка Caddy (HTTPS) --------
-log "Шаг 8/9: настройка Caddy для домена $DOMAIN (авто-HTTPS)..."
+# -------- 8. Настройка Caddy --------
+log "Шаг 8/9: настройка Caddy для $DOMAIN..."
 
 # Бэкап старого Caddyfile
 if [[ -f /etc/caddy/Caddyfile ]]; then
     cp /etc/caddy/Caddyfile "/etc/caddy/Caddyfile.bak.$(date +%s)"
 fi
 
-cat > /etc/caddy/Caddyfile <<EOF
+# Детектим, что $DOMAIN — это IP-адрес (IPv4 или IPv6).
+# Если да — переводим Caddy в режим HTTP-only (без HTTPS), слушаем 0.0.0.0:80.
+# Это типовой сценарий для локальных/ZeroTier-инсталляций без домена.
+IS_IP=false
+if [[ "$DOMAIN" =~ ^[0-9]{1,3}(\.[0-9]{1,3}){3}$ ]] || [[ "$DOMAIN" =~ ^\[?[0-9a-fA-F:]+\]?$ ]]; then
+    IS_IP=true
+fi
+
+# Явный флаг --no-https форсирует HTTP-only режим даже для домена
+if [[ "$FORCE_NO_HTTPS" == "true" ]]; then
+    IS_IP=true
+fi
+
+if [[ "$IS_IP" == "true" ]]; then
+    log "  Режим: HTTP-only (без HTTPS) — $DOMAIN выглядит как IP-адрес или передан --no-https"
+    cat > /etc/caddy/Caddyfile <<EOF
+# HTTP-only режим. Слушаем 80 порт на всех интерфейсах.
+# HTTPS НЕ запрашивается (нет домена → нет Let's Encrypt).
+http://0.0.0.0:80 {
+    encode gzip zstd
+
+    # Статика Next.js
+    @static path /_next/static/*
+    handle @static {
+        root * $INSTALL_DIR/.next/standalone
+        file_server
+        header Cache-Control "public, max-age=31536000, immutable"
+    }
+
+    # public/
+    @public path /favicon.ico /robots.txt /logo.svg
+    handle @public {
+        root * $INSTALL_DIR/.next/standalone
+        file_server
+    }
+
+    # Проксирование на Next.js
+    reverse_proxy 127.0.0.1:3000 {
+        header_up X-Real-IP {remote_host}
+        header_up X-Forwarded-For {remote_host}
+        header_up X-Forwarded-Proto {scheme}
+    }
+
+    log {
+        output file /var/log/caddy/vologda-azs.log {
+            roll_size 10MB
+            roll_keep 5
+        }
+        format json
+    }
+}
+EOF
+    SITE_URL="http://$DOMAIN"
+else
+    log "  Режим: HTTPS (домен $DOMAIN, авто-сертификат Let's Encrypt)"
+    cat > /etc/caddy/Caddyfile <<EOF
 $DOMAIN {
     encode gzip zstd
 
@@ -259,10 +350,23 @@ $DOMAIN {
     }
 }
 EOF
+    SITE_URL="https://$DOMAIN"
+fi
 
 systemctl reload caddy || systemctl restart caddy
-ok "  Caddy настроен, HTTPS сертификат будет получен автоматически"
-ok "  Сайт будет доступен на https://$DOMAIN (через 30-60 сек после получения сертификата)"
+ok "  Caddy настроен"
+ok "  Сайт будет доступен на $SITE_URL"
+
+# Если HTTP-only — открыть порт 80 в ufw (если он включён)
+if [[ "$IS_IP" == "true" ]]; then
+    if command -v ufw &> /dev/null && ufw status | grep -q "Status: active"; then
+        log "  Открываю порт 80 в ufw..."
+        ufw allow 80/tcp || true
+        # Разрешаем трафик с интерфейсов ZeroTier
+        ufw allow in on zt+ comment 'ZeroTier' || true
+        ok "  ufw: порт 80 и ZeroTier интерфейсы открыты"
+    fi
+fi
 
 # -------- 9. Cron: автообновление + бэкапы --------
 log "Шаг 9/9: настройка cron (автообновление каждые $REFRESH_INTERVAL_MIN мин + бэкап БД)..."
@@ -311,14 +415,26 @@ echo -e "${GREEN}========================================================${NC}"
 echo -e "${GREEN}  УСТАНОВКА ЗАВЕРШЕНА${NC}"
 echo -e "${GREEN}========================================================${NC}"
 echo ""
-echo "  🌐 Сайт:        https://$DOMAIN"
+echo "  🌐 Сайт:        $SITE_URL"
 echo "  📁 Папка:       $INSTALL_DIR"
 echo "  🗄  БД:          $INSTALL_DIR/db/custom.db"
 echo "  👤 Пользователь: $RUN_USER"
 echo ""
+if [[ "$IS_IP" == "true" ]]; then
+echo "  Режим: HTTP-only (без HTTPS, без домена)"
+echo "  Доступ: из локальной сети / ZeroTier по адресу выше"
+echo ""
+echo "  Если не открывается — проверьте:"
+echo "    • ufw: sudo ufw status (порт 80 должен быть открыт)"
+echo "    • ZeroTier: sudo zerotier-cli listnetworks (сеть должна быть OK)"
+echo "    • Caddy:    sudo systemctl status caddy"
+else
+echo "  Режим: HTTPS (домен $DOMAIN)"
+echo "  Сертификат Let's Encrypt получается автоматически (1-2 мин)"
+fi
+echo ""
 echo "  Следующие шаги:"
-echo "    1. Откройте https://$DOMAIN в браузере"
-echo "       (если не работает — подождите 1-2 мин, пока Caddy получит сертификат)"
+echo "    1. Откройте $SITE_URL в браузере"
 echo "    2. Перейдите в таб «Настройки»"
 echo "    3. Вставьте JSESSIONID (как его получить — см. README.md)"
 echo "    4. Перейдите в таб «АЗС», нажмите «Обновить»"
@@ -332,6 +448,8 @@ echo ""
 echo "  Обновление кода:"
 echo "    cd $INSTALL_DIR && bash scripts/update.sh"
 echo ""
+if [[ "$IS_IP" != "true" ]]; then
 warn "  ⚠ Если домен за Cloudflare — отключите проксирование (серое облако)"
 warn "    для этого поддомена, иначе Caddy не сможет получить HTTPS сертификат."
 echo ""
+fi
