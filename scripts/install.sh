@@ -278,7 +278,10 @@ if [[ "$IS_IP" == "true" ]]; then
     cat > /etc/caddy/Caddyfile <<EOF
 # HTTP-only режим. Слушаем 80 порт на всех интерфейсах.
 # HTTPS НЕ запрашивается (нет домена → нет Let's Encrypt).
-http://0.0.0.0:80 {
+# Используем ':80' (без префикса http:// и без IP), чтобы Caddy матчил
+# ЛЮБОЙ Host header — иначе запросы с Host: 10.147.17.248 будут падать
+# в дефолтный 404/пустой ответ, потому что site block ждёт Host: 0.0.0.0.
+:80 {
     encode gzip zstd
 
     # Статика Next.js
