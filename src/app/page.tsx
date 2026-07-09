@@ -152,7 +152,7 @@ function StationCard({ s, onShowHistory }: { s: Station; onShowHistory?: (s: Sta
                 key={i}
                 className="rounded-md border bg-muted/40 px-3 py-2"
               >
-                <p className="text-xs text-muted-foreground">АИ-{f.fuel}</p>
+                <p className="text-xs text-muted-foreground">{fmtFuelName(f.fuel)}</p>
                 <p className="text-base font-semibold tabular-nums">
                   {f.liters != null ? `${f.liters.toLocaleString('ru-RU')} л` : '—'}
                 </p>
@@ -211,6 +211,16 @@ function fmtLiters(n: number): string {
   if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M л`
   if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K л`
   return `${Math.round(n)} л`
+}
+
+/**
+ * Человеческое название типа топлива.
+ * Числовые коды (92, 95, 100) → «АИ-92», «АИ-95».
+ * Строковые коды (ДТ, ДТ-З, ГАЗ) → как есть.
+ */
+function fmtFuelName(code: string): string {
+  if (/^\d{2,3}$/.test(code)) return `АИ-${code}`
+  return code
 }
 
 function StationHistoryDialog({ station, onClose }: { station: Station | null; onClose: () => void }) {
@@ -314,7 +324,7 @@ function StationHistoryDialog({ station, onClose }: { station: Station | null; o
                         key={ft}
                         type="monotone"
                         dataKey={ft}
-                        name={`АИ-${ft}`}
+                        name={fmtFuelName(ft)}
                         stroke={CHART_COLORS[i % CHART_COLORS.length]}
                         strokeWidth={2}
                         dot={false}
@@ -422,7 +432,7 @@ function AnalyticsPanel() {
               icon={<TrendingUp className="w-5 h-5" />}
               label="Типов топлива"
               value={analytics.fuelTypes.length}
-              hint={analytics.fuelTypes.map((t) => `АИ-${t}`).join(', ')}
+              hint={analytics.fuelTypes.map((t) => fmtFuelName(t)).join(', ')}
             />
             <StatCard
               icon={<Layers className="w-5 h-5" />}
@@ -465,7 +475,7 @@ function AnalyticsPanel() {
                         key={ft}
                         type="monotone"
                         dataKey={ft}
-                        name={`АИ-${ft}`}
+                        name={fmtFuelName(ft)}
                         stroke={CHART_COLORS[i % CHART_COLORS.length]}
                         strokeWidth={2}
                         fill={`url(#grad-${ft})`}
