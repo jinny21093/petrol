@@ -1,23 +1,48 @@
-:81 {
-	@transform_port_query {
-		query XTransformPort=*
+# Caddyfile — reverse proxy + авто-HTTPS для дашборда АЗС Вологды
+#
+# Установка на Ubuntu 22.04:
+#   sudo apt install -y debian-keyring debian-archive-keyring apt-transport-https
+#   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
+#   curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' | sudo tee /etc/apt/sources.list.d/caddy-stable.list
+#   sudo apt update && sudo apt install -y caddy
+#
+# Применить этот файл:
+#   sudo cp Caddyfile /etc/caddy/Caddyfile
+#   sudo systemctl reload caddy
+#
+# ЗАМЕНИТЕ azs.example.ru на ваш реальный домен!
+# A-запись домена уже должна указывать на IP вашего сервера.
+
+azs.example.ru {
+	encode gzip zstd
+
+	# Статика Next.js (длинный кэш)
+	@static path /_next/static/*
+	handle @static {
+		root * /var/www/vologda-azs/.next/standalone
+		file_server
+		header Cache-Control "public, max-age=31536000, immutable"
 	}
 
-	handle @transform_port_query {
-		reverse_proxy localhost:{query.XTransformPort} {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
-		}
+	# Прочая статика из public/
+	@public path /favicon.ico /robots.txt /logo.svg
+	handle @public {
+		root * /var/www/vologda-azs/.next/standalone
+		file_server
 	}
 
-	handle {
-		reverse_proxy localhost:3000 {
-			header_up Host {host}
-			header_up X-Forwarded-For {remote_host}
-			header_up X-Forwarded-Proto {scheme}
-			header_up X-Real-IP {remote_host}
+	# Всё остальное проксируем на Next.js standalone-сервер
+	reverse_proxy 127.0.0.1:3000 {
+		header_up X-Real-IP {remote_host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+	}
+
+	log {
+		output file /var/log/caddy/vologda-azs.log {
+			roll_size 10MB
+			roll_keep 5
 		}
+		format json
 	}
 }

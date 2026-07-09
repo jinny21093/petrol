@@ -1,7 +1,5 @@
-# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
-
 # dependencies
-node_modules
+/node_modules
 /.pnp
 .pnp.*
 .yarn/*
@@ -31,24 +29,41 @@ yarn-error.log*
 .pnpm-debug.log*
 
 # env files (can opt-in for committing if needed)
-.env*
+.env
+.env.local
+.env.*.local
+!.env.example
 
 # vercel
 .vercel
 
-
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-local-*
-.claude
-.z-ai-config
+
+# prisma sqlite database (НЕ коммитим — содержит реальные настройки пользователя)
+db/*.db
+db/*.db-journal
+db/*.db-shm
+db/*.db-wal
+
+# logs
 *.log
 dev.log
-dev.out.log
-test
-prompt
-
 server.log
-# Skills directory
+
+# agent browser / sandbox artifacts
+/zscripts/
+/.zscripts/
 /skills/
+/agent-ctx/
+/dev.log
+/server.log
+/download/
+/examples/
+/mini-services/
+
+# IDE
+.idea/
+.vscode/
+*.swp
