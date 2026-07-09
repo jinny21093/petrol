@@ -25,6 +25,11 @@ export interface Station {
   address: string
   status: string
   hidden: boolean
+  source: string
+  longitude: number | null
+  latitude: number | null
+  logoUrl: string | null
+  availabilityFuel: boolean
   updatedAt: string
   latestSnapshot: StationSnapshot | null
 }

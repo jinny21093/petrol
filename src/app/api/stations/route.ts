@@ -54,6 +54,11 @@ export async function GET(req: NextRequest) {
       address: s.address,
       status: s.status,
       hidden: s.hidden,
+      source: s.source,
+      longitude: s.longitude,
+      latitude: s.latitude,
+      logoUrl: s.logoUrl,
+      availabilityFuel: s.availabilityFuel,
       updatedAt: s.updatedAt,
       latestSnapshot: latest
         ? {

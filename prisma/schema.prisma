@@ -25,14 +25,23 @@ model CoveragePoint {
   @@index([enabled])
 }
 
-/// АЗС, обнаруженная на геопортале. Уникальна по externalId (id записи на геопортале).
+/// АЗС, обнаруженная на геопортале или platforma35. Уникальна по externalId.
 model Station {
   id         String   @id @default(cuid())
-  externalId Int      @unique // id записи на геопортале (поле "id" в records[])
-  graphId    Int?     // graphId с геопортала
-  brand      String   @default("Неизвестно") // поле 6917
-  address    String   @default("")           // поле 6918
-  status     String   @default("Нет")        // поле 6919 ("Да" — работает)
+  externalId Int      @unique // id записи на источнике (id маркера platforma35 или геопортала)
+  graphId    Int?     // graphId с геопортала (для platforma35 = null)
+  brand      String   @default("Неизвестно")
+  address    String   @default("")
+  status     String   @default("Нет")        // "Да" — работает
+  /// Источник данных: 'platforma35' или 'geoportal'
+  source     String   @default("platforma35")
+  /// Координаты в WGS84 [lng, lat] — пришли от platforma35 (геопортал их не отдаёт)
+  longitude  Float?
+  latitude   Float?
+  /// URL логотипа бренда (от platforma35)
+  logoUrl    String?
+  /// Поле из platforma35: true если есть данные об остатках, false если АЗС не сообщает
+  availabilityFuel Boolean @default(false)
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 

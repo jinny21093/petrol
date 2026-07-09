@@ -1,15 +1,28 @@
 /**
- * Клиент геопортала Вологды (https://3d-geoportal.vologda-city.ru/portal/gasstation)
+ * Клиент источников данных о наличии топлива на АЗС Вологды.
  *
- * Эндпоинты:
- *  - POST /api/banks/1/graphic/layers/sel  — список АЗС в области
- *  - POST /api/banks/1/graphic/layers/find — геометрия (опционально, не используется)
+ * ОСНОВНОЙ источник — публичный API platforma35.ru:
+ *   GET https://platforma35.ru/communal_economy/azs/api/markers/
+ *   - без авторизации
+ *   - отдаёт сразу все 9 АЗС города
+ *   - уже структурированные данные (тип топлива → литры)
+ *   - координаты, логотипы, история за день
  *
- * Авторизация: анонимная сессия через JSESSIONID. Если кука не задана в настройках,
- * клиент сам делает GET к /portal/gasstation и забирает Set-Cookie.
+ * РЕЗЕРВНЫЙ источник (legacy) — геопортал 3d-geoportal.vologda-city.ru:
+ *   - требует JSESSIONID (ESIA-авторизация через Госуслуги)
+ *   - кука регулярно протухает
+ *   - сырой текст «92 - 5000 л / 250 машин», нужен парсер
+ *   - нет координат
+ *   Используется только если platforma35 упадёт.
  */
 
 import { db } from '@/lib/db'
+import {
+  fetchAllStations as fetchAllPlatforma35,
+  absoluteLogoUrl,
+  parsePlatforma35Time,
+  type Platforma35Marker,
+} from '@/lib/platforma35'
 
 const BASE_URL = 'https://3d-geoportal.vologda-city.ru'
 const SEL_PATH = '/api/banks/1/graphic/layers/sel'
@@ -317,65 +330,46 @@ export interface RefreshResult {
 export type CookieStatus = 'alive' | 'expired' | 'not_set' | 'unknown'
 
 /**
- * Проверить статус JSESSIONID, не делая тяжелый опрос АЗС.
- * Лёгкий heartbeat-запрос: GET /api/info с текущей кукой.
- * Если в ответе SupportESIA — кука протухла.
- * Если ответ отличается — кука жива.
+ * Проверить доступность источника данных (platforma35.ru).
+ * Лёгкий heartbeat-запрос: GET /communal_economy/azs/api/markers/.
  *
- * Также обновляет setting 'cookieStatus' и 'cookieStatusAt'.
+ * Возвращает:
+ *  - 'alive'   — API доступен
+ *  - 'expired' — API недоступен (упал, нет интернета, изменился формат)
+ *  - 'unknown' — не удалось определить
+ *
+ * Сохраняет статус в Setting.cookieStatus + cookieStatusAt.
+ *
+ * Историческое название cookieStatus сохранено для совместимости с UI,
+ * хотя сейчас это уже не про JSESSIONID, а про доступность источника.
  */
 export async function checkCookieStatus(): Promise<CookieStatus> {
-  const cookie = await getCookie()
-  if (!cookie) {
-    await saveSetting('cookieStatus', 'not_set')
-    await saveSetting('cookieStatusAt', new Date().toISOString())
-    return 'not_set'
-  }
-
   try {
-    const resp = await fetch(`${BASE_URL}/api/info`, {
-      method: 'GET',
-      headers: {
-        'User-Agent':
-          'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
-        Accept: 'application/json',
-        Cookie: cookie,
-      },
-    })
-    if (!resp.ok) {
-      // 401/403 — точно протухла
-      if (resp.status === 401 || resp.status === 403) {
-        await saveSetting('cookieStatus', 'expired')
-        await saveSetting('cookieStatusAt', new Date().toISOString())
-        return 'expired'
-      }
-      await saveSetting('cookieStatus', 'unknown')
+    const markers = await fetchAllPlatforma35()
+    if (markers.length > 0) {
+      await saveSetting('cookieStatus', 'alive')
       await saveSetting('cookieStatusAt', new Date().toISOString())
-      return 'unknown'
+      return 'alive'
     }
-    const json = (await resp.json()) as Record<string, unknown>
-    // Если в ответе есть SupportESIA — кука не авторизована
-    if ('SupportESIA' in json) {
-      await saveSetting('cookieStatus', 'expired')
-      await saveSetting('cookieStatusAt', new Date().toISOString())
-      return 'expired'
-    }
-    await saveSetting('cookieStatus', 'alive')
+    // markers пустой — странно, считаем недоступным
+    await saveSetting('cookieStatus', 'expired')
     await saveSetting('cookieStatusAt', new Date().toISOString())
-    return 'alive'
+    return 'expired'
   } catch {
-    await saveSetting('cookieStatus', 'unknown')
+    await saveSetting('cookieStatus', 'expired')
     await saveSetting('cookieStatusAt', new Date().toISOString())
-    return 'unknown'
+    return 'expired'
   }
 }
 
 /**
- * Главный цикл опроса. Проходит по всем активным coverage-точкам,
- * обновляет/создаёт станции, сохраняет свежий снапшот остатков для каждой.
+ * Главный цикл опроса через platforma35.ru (основной источник).
  *
- * Перед опросом проверяет статус куки через лёгкий запрос.
- * Если кука протухла — сразу возвращает ошибку, не тратя время на 9 запросов.
+ * Получает все 9 АЗС одним запросом, без авторизации.
+ * Обновляет/создаёт станции (с координатами, логотипами), сохраняет
+ * свежий снапшот остатков для каждой.
+ *
+ * Возвращает отчёт в том же формате, что и legacy-версия через геопортал.
  */
 export async function refreshAllStations(): Promise<RefreshResult> {
   const startedAt = new Date()
@@ -383,132 +377,111 @@ export async function refreshAllStations(): Promise<RefreshResult> {
   let stationsFound = 0
   let stationsNew = 0
   let stationsUpdated = 0
-  let cookieStatus: CookieStatus = 'unknown'
 
-  // Предварительная проверка куки — экономит 9 запросов если кука протухла
-  cookieStatus = await checkCookieStatus()
-  if (cookieStatus === 'not_set') {
-    errors.push('Не задана JSESSIONID — добавьте её в Настройках.')
-    return {
-      pointsProcessed: 0,
-      stationsFound: 0,
-      stationsNew: 0,
-      stationsUpdated: 0,
-      errors,
-      startedAt,
-      finishedAt: new Date(),
-      cookieStatus,
-    }
-  }
-  if (cookieStatus === 'expired') {
-    errors.push(
-      'JSESSIONID протухла. Откройте https://3d-geoportal.vologda-city.ru/portal/gasstation ' +
-        'в браузере, войдите через Госуслуги, скопируйте JSESSIONID из cookies и вставьте в Настройках.',
-    )
-    return {
-      pointsProcessed: 0,
-      stationsFound: 0,
-      stationsNew: 0,
-      stationsUpdated: 0,
-      errors,
-      startedAt,
-      finishedAt: new Date(),
-      cookieStatus,
-    }
-  }
+  // platforma35 не требует куки — статус всегда 'alive'
+  const cookieStatus: CookieStatus = 'alive'
 
-  const cookie = await getCookie()
-  if (!cookie) {
-    // на всякий случай — вдруг кука исчезла между проверкой и использованием
-    cookieStatus = 'not_set'
-    errors.push('Не удалось получить JSESSIONID — задайте её в настройках.')
-    return {
-      pointsProcessed: 0,
-      stationsFound: 0,
-      stationsNew: 0,
-      stationsUpdated: 0,
-      errors,
-      startedAt,
-      finishedAt: new Date(),
-      cookieStatus,
-    }
-  }
+  try {
+    const markers = await fetchAllPlatforma35()
+    stationsFound = markers.length
 
-  const points = await db.coveragePoint.findMany({ where: { enabled: true } })
-  let firstErrorWasExpired = false
-  for (const p of points) {
-    try {
-      const found = await fetchStationsAtPoint(p.mapX, p.mapY, p.scale, cookie)
-      // Успешный ответ — кука точно жива
-      cookieStatus = 'alive'
-      stationsFound += found.length
-      for (const s of found) {
-        // upsert по externalId
-        const existing = await db.station.findUnique({
-          where: { externalId: s.id },
-        })
-        const data = {
-          brand: s.brand || existing?.brand || 'Неизвестно',
-          address: s.address || existing?.address || '',
-          status: s.status || existing?.status || 'Нет',
-          graphId: s.graphId ?? existing?.graphId ?? null,
+    for (const marker of markers) {
+      try {
+        // Считаем «работающей», если availability_fuel = true
+        const status = marker.availability_fuel ? 'Да' : 'Нет'
+
+        // Преобразуем топлива в наш формат
+        const fuels = marker.remaining_fuel.map((f) => ({
+          fuel: f.type,
+          liters: f.remains,
+          cars: null, // platforma35 не отдаёт количество машин в структурированном виде
+        }))
+
+        const parsed = {
+          comment: marker.comment || null,
+          fuels,
         }
+
+        // Время последнего обновления
+        const sourceUpdatedAt = parsePlatforma35Time(marker.last_update)
+
+        const existing = await db.station.findUnique({
+          where: { externalId: marker.id },
+        })
+
+        const data = {
+          brand: marker.title || 'Без бренда',
+          address: marker.address || '',
+          status,
+          graphId: null, // platforma35 не даёт graphId
+          source: 'platforma35',
+          longitude: marker.coordinates?.[0] ?? null,
+          latitude: marker.coordinates?.[1] ?? null,
+          logoUrl: absoluteLogoUrl(marker.logo),
+          availabilityFuel: marker.availability_fuel,
+        }
+
         let station: { id: string }
         if (existing) {
           const updated = await db.station.update({
-            where: { externalId: s.id },
+            where: { externalId: marker.id },
             data,
           })
           station = updated
-          // считаем "обновлённой", если изменилось что-то существенное
           if (
             existing.brand !== data.brand ||
             existing.address !== data.address ||
-            existing.status !== data.status
+            existing.status !== data.status ||
+            existing.availabilityFuel !== data.availabilityFuel
           ) {
             stationsUpdated++
           }
         } else {
           station = await db.station.create({
-            data: { externalId: s.id, ...data },
+            data: { externalId: marker.id, ...data },
           })
           stationsNew++
         }
 
-        // сохраняем снапшот
-        const parsed = parseFuelDetails(s.rawDetails)
-        await db.fuelSnapshot.create({
-          data: {
-            stationId: station.id,
-            rawDetails: s.rawDetails,
-            parsedFuels: JSON.stringify(parsed),
-            sourceCreatedAt: s.sourceCreatedAt,
-            sourceUpdatedAt: s.sourceUpdatedAt,
-          },
-        })
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e)
-      errors.push(`Точка "${p.name}": ${msg}`)
-      // Если первая же точка упала с ошибкой про ESIA — кука протухла, прерываем
-      if (msg.includes('ESIA') && !firstErrorWasExpired) {
-        firstErrorWasExpired = true
-        cookieStatus = 'expired'
-        await saveSetting('cookieStatus', 'expired')
-        await saveSetting('cookieStatusAt', new Date().toISOString())
-        break
+        // сохраняем снапшот — только если есть данные (не сохраняем пустые снапшоты каждый опрос)
+        if (fuels.length > 0 || marker.comment) {
+          await db.fuelSnapshot.create({
+            data: {
+              stationId: station.id,
+              rawDetails: marker.info || '',
+              parsedFuels: JSON.stringify(parsed),
+              sourceCreatedAt: sourceUpdatedAt,
+              sourceUpdatedAt,
+            },
+          })
+        }
+      } catch (e) {
+        errors.push(
+          `АЗС "${marker.title || '?'}" (${marker.address}): ${e instanceof Error ? e.message : String(e)}`,
+        )
       }
     }
+
+    // Сохраняем встроенную историю (если её ещё не было в нашей БД)
+    await importHistoryFromPlatforma35(markers)
+
+    await saveSetting('lastRefreshAt', new Date().toISOString())
+    await saveSetting(
+      'lastRefreshSummary',
+      JSON.stringify({ stationsFound, stationsNew, stationsUpdated, errorsCount: errors.length }),
+    )
+    await saveSetting('cookieStatus', 'alive')
+    await saveSetting('cookieStatusAt', new Date().toISOString())
+  } catch (e) {
+    errors.push(
+      `Ошибка получения данных с platforma35.ru: ${e instanceof Error ? e.message : String(e)}`,
+    )
+    await saveSetting('cookieStatus', 'expired')
+    await saveSetting('cookieStatusAt', new Date().toISOString())
   }
 
-  await saveSetting('lastRefreshAt', new Date().toISOString())
-  await saveSetting(
-    'lastRefreshSummary',
-    JSON.stringify({ stationsFound, stationsNew, stationsUpdated, errorsCount: errors.length }),
-  )
-
   return {
-    pointsProcessed: points.length,
+    pointsProcessed: 1, // один запрос к platforma35
     stationsFound,
     stationsNew,
     stationsUpdated,
@@ -516,6 +489,56 @@ export async function refreshAllStations(): Promise<RefreshResult> {
     startedAt,
     finishedAt: new Date(),
     cookieStatus,
+  }
+}
+
+/**
+ * Сохранить исторические точки из ответа platforma35 в нашу БД,
+ * если их там ещё нет. Platforma35 отдаёт 2-3 точки за день — например:
+ *   09.07, 15:30
+ *   09.07, 13:00
+ *
+ * Это полезно при первом опросе или при пропуске нескольких опросов.
+ */
+async function importHistoryFromPlatforma35(markers: Platforma35Marker[]): Promise<void> {
+  for (const marker of markers) {
+    if (!marker.history_fuel || marker.history_fuel.length === 0) continue
+
+    const station = await db.station.findUnique({
+      where: { externalId: marker.id },
+    })
+    if (!station) continue
+
+    // Для каждой точки истории — проверяем, есть ли уже снапшот с таким sourceUpdatedAt
+    for (const hp of marker.history_fuel) {
+      const sourceUpdatedAt = parsePlatforma35Time(hp.time)
+      if (!sourceUpdatedAt) continue
+
+      // Проверяем, есть ли уже снапшот с этим временем
+      const existing = await db.fuelSnapshot.findFirst({
+        where: {
+          stationId: station.id,
+          sourceUpdatedAt,
+        },
+      })
+      if (existing) continue
+
+      // Создаём снапшот
+      const fuels = hp.history.map((f) => ({
+        fuel: f.type,
+        liters: f.remains,
+        cars: null,
+      }))
+      await db.fuelSnapshot.create({
+        data: {
+          stationId: station.id,
+          rawDetails: '',
+          parsedFuels: JSON.stringify({ comment: null, fuels }),
+          sourceCreatedAt: sourceUpdatedAt,
+          sourceUpdatedAt,
+        },
+      })
+    }
   }
 }
 

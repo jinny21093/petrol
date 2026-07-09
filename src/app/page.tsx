@@ -44,7 +44,6 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { Separator } from '@/components/ui/separator'
 import { toast } from 'sonner'
 import {
   useStations,
@@ -124,17 +123,34 @@ function StationCard({ s, onShowHistory }: { s: Station; onShowHistory?: (s: Sta
     <Card className="overflow-hidden">
       <CardHeader className="pb-3">
         <div className="flex items-start justify-between gap-2">
-          <div className="min-w-0">
-            <CardTitle className="text-base flex items-center gap-2 flex-wrap">
-              <span className="truncate">{s.brand || 'Без бренда'}</span>
-              <Badge variant={isActive ? 'default' : 'secondary'} className="shrink-0">
-                {isActive ? 'Работает' : 'Не работает'}
-              </Badge>
-            </CardTitle>
-            <CardDescription className="flex items-center gap-1.5 mt-1 text-sm">
-              <MapPin className="w-3.5 h-3.5 shrink-0" />
-              <span className="truncate">{s.address || 'адрес не указан'}</span>
-            </CardDescription>
+          <div className="flex gap-3 min-w-0 flex-1">
+            {s.logoUrl ? (
+              <img
+                src={s.logoUrl}
+                alt={s.brand}
+                className="w-10 h-10 object-contain shrink-0 rounded border bg-white p-1"
+                onError={(e) => {
+                  // если логотип не загрузился — скрываем
+                  ;(e.currentTarget as HTMLImageElement).style.display = 'none'
+                }}
+              />
+            ) : (
+              <div className="w-10 h-10 rounded bg-muted flex items-center justify-center shrink-0">
+                <Fuel className="w-5 h-5 text-muted-foreground" />
+              </div>
+            )}
+            <div className="min-w-0">
+              <CardTitle className="text-base flex items-center gap-2 flex-wrap">
+                <span className="truncate">{s.brand || 'Без бренда'}</span>
+                <Badge variant={isActive ? 'default' : 'secondary'} className="shrink-0">
+                  {isActive ? 'Работает' : 'Нет данных'}
+                </Badge>
+              </CardTitle>
+              <CardDescription className="flex items-center gap-1.5 mt-1 text-sm">
+                <MapPin className="w-3.5 h-3.5 shrink-0" />
+                <span className="truncate">{s.address || 'адрес не указан'}</span>
+              </CardDescription>
+            </div>
           </div>
           <div className="text-right shrink-0">
             <p className="text-xs text-muted-foreground">обновлено</p>
@@ -861,82 +877,96 @@ function CoverageRow({
 }
 
 function SettingsPanel() {
-  const { settings, loading, save } = useSettings()
-  const [value, setValue] = useState('')
-  const [saving, setSaving] = useState(false)
-
-  // синхронизируем локальное поле с тем, что пришло с бэка
-  const lastSeen = settings.jsessionId || ''
-  const [lastSeenLocal, setLastSeenLocal] = useState('')
-  if (lastSeen !== lastSeenLocal) {
-    setLastSeenLocal(lastSeen)
-    setValue('')
-  }
-
-  const handleSave = async () => {
-    if (!value.trim()) {
-      toast.error('Введите JSESSIONID')
-      return
-    }
-    setSaving(true)
-    try {
-      await save(value.trim())
-      toast.success('JSESSIONID сохранён')
-      setValue('')
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setSaving(false)
-    }
-  }
-
   return (
-    <Card>
-      <CardHeader>
-        <CardTitle className="text-base flex items-center gap-2">
-          <SettingsIcon className="w-4 h-4" />
-          Настройки сессии
-        </CardTitle>
-        <CardDescription>
-          JSESSIONID нужен для доступа к геопорталу Вологды. Берётся из cookies браузера после
-          открытия{' '}
-          <a
-            href="https://3d-geoportal.vologda-city.ru/portal/gasstation"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="underline"
-          >
-            страницы газовой карты
-          </a>
-          . Если поле пустое, система попытается получить свежую куку автоматически.
-        </CardDescription>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div className="grid gap-1.5">
-          <Label htmlFor="jsess">Текущий JSESSIONID</Label>
-          <div className="font-mono text-sm bg-muted px-3 py-2 rounded tabular-nums">
-            {loading ? 'загрузка…' : settings.jsessionId || 'не задан'}
+    <div className="space-y-4">
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base flex items-center gap-2">
+            <SettingsIcon className="w-4 h-4" />
+            Источник данных
+          </CardTitle>
+          <CardDescription>
+            Дашборд получает данные из публичного API{' '}
+            <a
+              href="https://platforma35.ru/communal_economy/azs/"
+              target="_blank"
+              rel="noopener noreferrer"
+              className="underline"
+            >
+              platforma35.ru/communal_economy/azs
+            </a>
+            . Авторизация не требуется.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-3">
+          <div className="rounded-md border bg-muted/40 p-3 text-sm">
+            <p className="font-medium mb-2">Что предоставляет API:</p>
+            <ul className="space-y-1 text-muted-foreground text-sm">
+              <li>✓ Все 9 АЗС Вологды одним запросом</li>
+              <li>✓ Координаты (широта/долгота) каждой АЗС</li>
+              <li>✓ Логотипы брендов (Лукойл, Газпромнефть)</li>
+              <li>✓ Структурированные остатки по типам топлива (АИ-92, АИ-95, АИ-100)</li>
+              <li>✓ История за день (несколько точек)</li>
+              <li>✓ Комментарии о подвозе</li>
+            </ul>
           </div>
-        </div>
-        <Separator />
-        <div className="grid gap-1.5">
-          <Label htmlFor="jsess-new">Новый JSESSIONID</Label>
-          <Input
-            id="jsess-new"
-            value={value}
-            onChange={(e) => setValue(e.target.value)}
-            placeholder="8552CED5A2E1526B7A8F7ABF843BFD86"
-            className="font-mono"
-          />
-          <p className="text-xs text-muted-foreground">
-            Вставьте только значение куки (без префикса «JSESSIONID=»).
-          </p>
-        </div>
-        <Button onClick={handleSave} disabled={saving}>
-          {saving ? 'Сохранение…' : 'Сохранить'}
-        </Button>
-      </CardContent>
-    </Card>
+          <div className="rounded-md border bg-muted/40 p-3 text-sm">
+            <p className="font-medium mb-1">Endpoint:</p>
+            <code className="text-xs break-all">
+              GET https://platforma35.ru/communal_economy/azs/api/markers/
+            </code>
+          </div>
+          <div className="rounded-md border border-amber-200 bg-amber-50 dark:bg-amber-950/30 dark:border-amber-900 p-3 text-sm">
+            <p className="font-medium text-amber-700 dark:text-amber-300 mb-1">
+              Частота обновления
+            </p>
+            <p className="text-amber-700 dark:text-amber-400">
+              Platforma35 обновляет данные примерно каждые 2-3 часа.
+              Cron дашборда опрашивает API каждые 10 минут — даже если новые данные
+              появляются редко, мы их подхватываем сразу.
+            </p>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Расписание cron</CardTitle>
+          <CardDescription>
+            Автоматические задачи, запускаемые на сервере.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-2 text-sm">
+          <div className="flex items-start gap-3 p-2 rounded border bg-muted/30">
+            <Badge variant="outline" className="shrink-0 font-mono">*/5 * * * *</Badge>
+            <div>
+              <p className="font-medium">Heartbeat — проверка источника</p>
+              <p className="text-xs text-muted-foreground">
+                Лёгкий запрос к platforma35. Обновляет статус «жив/недоступен» в дашборде.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-start gap-3 p-2 rounded border bg-muted/30">
+            <Badge variant="outline" className="shrink-0 font-mono">*/10 * * * *</Badge>
+            <div>
+              <p className="font-medium">Полный опрос АЗС</p>
+              <p className="text-xs text-muted-foreground">
+                Забирает все 9 АЗС + историю, сохраняет снапшоты в БД.
+              </p>
+            </div>
+          </div>
+          <div className="flex items-start gap-3 p-2 rounded border bg-muted/30">
+            <Badge variant="outline" className="shrink-0 font-mono">0 3 * * *</Badge>
+            <div>
+              <p className="font-medium">Бэкап БД</p>
+              <p className="text-xs text-muted-foreground">
+                Ежедневный бэкап SQLite в /var/backups/vologda-azs/, хранение 14 дней.
+              </p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }
 
@@ -992,54 +1022,6 @@ export default function HomePage() {
       </header>
 
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
-        {stats && stats.cookieStatus === 'expired' ? (
-          <Card className="border-red-500 bg-red-50 dark:bg-red-950/30">
-            <CardContent className="p-4 flex items-start gap-3">
-              <div className="shrink-0 rounded-full bg-red-100 dark:bg-red-900 p-2 text-red-600 dark:text-red-300">
-                <SettingsIcon className="w-5 h-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-red-700 dark:text-red-300">JSESSIONID протухла — данные не обновляются</p>
-                <p className="text-sm text-red-600 dark:text-red-400 mt-1">
-                  Откройте{' '}
-                  <a
-                    href="https://3d-geoportal.vologda-city.ru/portal/gasstation"
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="underline font-medium"
-                  >
-                    геопортал Вологды
-                  </a>{' '}
-                  в браузере, войдите через Госуслуги, скопируйте{' '}
-                  <code className="bg-red-100 dark:bg-red-900 px-1 rounded">JSESSIONID</code> из cookies
-                  и вставьте в табе «Настройки».
-                </p>
-                <p className="text-xs text-red-500 dark:text-red-400 mt-2">
-                  Последняя проверка: {fmtRelative(stats.cookieStatusAt)}
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        ) : null}
-
-        {stats && stats.cookieStatus === 'not_set' ? (
-          <Card className="border-amber-500 bg-amber-50 dark:bg-amber-950/30">
-            <CardContent className="p-4 flex items-start gap-3">
-              <div className="shrink-0 rounded-full bg-amber-100 dark:bg-amber-900 p-2 text-amber-600 dark:text-amber-300">
-                <SettingsIcon className="w-5 h-5" />
-              </div>
-              <div className="flex-1 min-w-0">
-                <p className="font-medium text-amber-700 dark:text-amber-300">
-                  JSESSIONID не задана — данные с геопортала не получаются
-                </p>
-                <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
-                  Перейдите в таб «Настройки» и вставьте JSESSIONID. Как получить — см. инструкцию там же.
-                </p>
-              </div>
-            </CardContent>
-          </Card>
-        ) : null}
-
         {stats && stats.cookieStatus === 'alive' ? (
           <Card className="border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-950/20">
             <CardContent className="p-3 flex items-center gap-3">
@@ -1059,11 +1041,33 @@ export default function HomePage() {
                 </svg>
               </div>
               <p className="text-sm text-emerald-700 dark:text-emerald-300">
-                JSESSIONID активна — опрос геопортала работает.
+                Источник данных: <strong>platforma35.ru</strong> (публичный API, без авторизации).
                 <span className="text-emerald-600 dark:text-emerald-400 ml-2 text-xs">
-                  Проверена {fmtRelative(stats.cookieStatusAt)}
+                  Последний опрос: {fmtRelative(stats.lastRefreshAt)}
                 </span>
               </p>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {stats && stats.cookieStatus === 'expired' ? (
+          <Card className="border-red-500 bg-red-50 dark:bg-red-950/30">
+            <CardContent className="p-4 flex items-start gap-3">
+              <div className="shrink-0 rounded-full bg-red-100 dark:bg-red-900 p-2 text-red-600 dark:text-red-300">
+                <Activity className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-red-700 dark:text-red-300">
+                  Источник данных временно недоступен
+                </p>
+                <p className="text-sm text-red-600 dark:text-red-400 mt-1">
+                  Не удалось получить данные с platforma35.ru. Возможные причины: нет интернета,
+                  сайт platforma35 недоступен, либо изменился формат ответа.
+                </p>
+                <p className="text-xs text-red-500 dark:text-red-400 mt-2">
+                  Последняя успешная проверка: {fmtRelative(stats.cookieStatusAt)}
+                </p>
+              </div>
             </CardContent>
           </Card>
         ) : null}
