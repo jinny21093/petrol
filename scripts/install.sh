@@ -280,30 +280,20 @@ if [[ "$IS_IP" == "true" ]]; then
 # HTTPS НЕ запрашивается (нет домена → нет Let's Encrypt).
 # Используем ':80' (без префикса http:// и без IP), чтобы Caddy матчил
 # ЛЮБОЙ Host header — иначе запросы с Host: 10.147.17.248 будут падать
-# в дефолтный 404/пустой ответ, потому что site block ждёт Host: 0.0.0.0.
+# в дефолтный 404/пустой ответ.
+#
+# ВАЖНО: вся статики проксируется на Next.js (127.0.0.1:3000), потому что
+# Next.js standalone сам умеет отдавать /.next/static/* и /public/*
+# с правильными MIME-типами и Cache-Control. Раньше мы пытались отдавать
+# статику через Caddy file_server, но пути не сходились (на диске .next/static,
+# в URL /_next/static — разница в точке), и Caddy возвращал 404 → CSS/JS не
+# грузились → сайт отображался без стилей.
 :80 {
     encode gzip zstd
 
-    # Статика Next.js
-    @static path /_next/static/*
-    handle @static {
-        root * $INSTALL_DIR/.next/standalone
-        file_server
-        header Cache-Control "public, max-age=31536000, immutable"
-    }
-
-    # public/
-    @public path /favicon.ico /robots.txt /logo.svg
-    handle @public {
-        root * $INSTALL_DIR/.next/standalone
-        file_server
-    }
-
-    # Проксирование на Next.js
+    # Всё проксируем на Next.js — он сам отдаёт HTML, CSS, JS, шрифты, иконки
     reverse_proxy 127.0.0.1:3000 {
         header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
     }
 
     log {
@@ -322,26 +312,9 @@ else
 $DOMAIN {
     encode gzip zstd
 
-    # Статика Next.js
-    @static path /_next/static/*
-    handle @static {
-        root * $INSTALL_DIR/.next/standalone
-        file_server
-        header Cache-Control "public, max-age=31536000, immutable"
-    }
-
-    # public/
-    @public path /favicon.ico /robots.txt /logo.svg
-    handle @public {
-        root * $INSTALL_DIR/.next/standalone
-        file_server
-    }
-
-    # Проксирование на Next.js
+    # Всё проксируем на Next.js (см. комментарий в IP-режиме выше)
     reverse_proxy 127.0.0.1:3000 {
         header_up X-Real-IP {remote_host}
-        header_up X-Forwarded-For {remote_host}
-        header_up X-Forwarded-Proto {scheme}
     }
 
     log {
