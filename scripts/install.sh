@@ -201,13 +201,17 @@ sudo -u "$RUN_USER" pm2 save
 # Автозапуск через systemd
 log "  Регистрирую PM2 в systemd для автозапуска..."
 PM2_STARTUP_OUTPUT=$(sudo -u "$RUN_USER" pm2 startup systemd -u "$RUN_USER" --hp "/home/$RUN_USER" 2>&1 || true)
-PM2_STARTUP_CMD=$(echo "$PM2_STARTUP_OUTPUT" | grep -oE 'sudo env PATH=[^ ]+ /[^ ]+pm2[^ ]+ startup [^ ]+ -u [^ ]+ --hp [^ ]+' | head -1)
+# ВАЖНО: grep может ничего не найти → exit 1 → с set -e это убьёт скрипт.
+# Поэтому добавляем `|| true` к pipeline, чтобы он не падал.
+PM2_STARTUP_CMD=$( { echo "$PM2_STARTUP_OUTPUT" | grep -oE 'sudo env PATH=[^ ]+ /[^ ]+pm2[^ ]+ startup [^ ]+ -u [^ ]+ --hp [^ ]+' | head -1; } || true )
 if [[ -n "$PM2_STARTUP_CMD" ]]; then
     eval "$PM2_STARTUP_CMD" || warn "  Не удалось зарегистрировать PM2 в systemd (возможно уже зарегистрирован)"
     ok "  PM2 автозапуск настроен"
 else
     warn "  Не удалось автоматически настроить автозапуск PM2."
-    warn "  Выполните вручную: sudo -u $RUN_USER pm2 startup systemd"
+    warn "  Выполните вручную для автозапуска при ребуте сервера:"
+    warn "    sudo -u $RUN_USER pm2 startup systemd"
+    warn "  (и выполните команду, которую выведет PM2)"
 fi
 
 ok "  Приложение запущено: http://127.0.0.1:3000"
