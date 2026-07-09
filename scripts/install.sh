@@ -117,17 +117,21 @@ log "Шаг 3/9: клонирование репо в $INSTALL_DIR..."
 
 if [[ -d "$INSTALL_DIR/.git" ]]; then
     warn "  Папка уже существует, делаю git pull..."
+    chown -R "$RUN_USER":"$RUN_USER" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
     sudo -u "$RUN_USER" git pull || warn "  git pull не удался, продолжаю с существующим кодом"
 else
+    # Создаём родительскую папку (например /var/www) и сразу отдаём её пользователю,
+    # чтобы git clone от имени $RUN_USER мог создать $INSTALL_DIR внутри.
     mkdir -p "$(dirname "$INSTALL_DIR")"
+    chown "$RUN_USER":"$RUN_USER" "$(dirname "$INSTALL_DIR")"
     sudo -u "$RUN_USER" git clone "$REPO_URL" "$INSTALL_DIR"
     cd "$INSTALL_DIR"
 fi
 
 ok "  Код в $INSTALL_DIR"
 
-# Передаём владение пользователю
+# Передаём владение пользователем (на случай повторного запуска)
 chown -R "$RUN_USER":"$RUN_USER" "$INSTALL_DIR"
 
 # -------- 4. Установка зависимостей + .env --------
