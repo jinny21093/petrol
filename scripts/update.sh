@@ -36,9 +36,31 @@ APP_NAME="vologda-azs"
 INSTALL_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 START_TIME=$(date +%s)
 
+# Парсим аргументы
+FORCE_REBUILD=false
+for arg in "$@"; do
+    case "$arg" in
+        --force|-f)
+            FORCE_REBUILD=true
+            ;;
+        --help|-h)
+            echo "Использование: bash scripts/update.sh [--force]"
+            echo ""
+            echo "Опции:"
+            echo "  --force, -f   Принудительно пересобрать и перезапустить, даже если"
+            echo "                новых коммитов нет. Полезно, если прошлый запуск упал"
+            echo "                посередине и нужно доделать шаги 4-8."
+            exit 0
+            ;;
+    esac
+done
+
 # Переходим в папку проекта
 cd "$INSTALL_DIR"
 log "Папка проекта: $INSTALL_DIR"
+if [[ "$FORCE_REBUILD" == "true" ]]; then
+    warn "Режим --force: принудительная пересборка даже без новых коммитов."
+fi
 
 # -------- 1. Проверка предусловий --------
 log "Шаг 1/8: проверка окружения..."
@@ -92,18 +114,24 @@ fi
 AFTER_COMMIT=$(git rev-parse HEAD)
 
 if [[ "$BEFORE_COMMIT" == "$AFTER_COMMIT" ]]; then
-    ok "  Уже актуально (commit $AFTER_COMMIT). Нечего обновлять."
-    # Восстанавливаем stash если был
-    if [[ "$LOCAL_CHANGES" -gt 0 ]]; then
-        git stash pop || warn "  Не удалось восстановить stash. Проверьте: git stash list"
+    if [[ "$FORCE_REBUILD" == "true" ]]; then
+        warn "  Код не изменился (commit $AFTER_COMMIT), но запрошен --force — прогоняю все шаги."
+    else
+        ok "  Уже актуально (commit $AFTER_COMMIT). Нечего обновлять."
+        # Восстанавливаем stash если был
+        if [[ "$LOCAL_CHANGES" -gt 0 ]]; then
+            git stash pop || warn "  Не удалось восстановить stash. Проверьте: git stash list"
+        fi
+        echo ""
+        ok "Обновление не требуется."
+        echo "Если нужно принудительно пересобрать и перезапустить — запустите:"
+        echo "  bash scripts/update.sh --force"
+        exit 0
     fi
-    echo ""
-    ok "Обновление не требуется."
-    exit 0
+else
+    ok "  Обновлено: $BEFORE_COMMIT → $AFTER_COMMIT"
+    ok "  Последний коммит: $(git log -1 --pretty='%h %s (%cr by %an)')"
 fi
-
-ok "  Обновлено: $BEFORE_COMMIT → $AFTER_COMMIT"
-ok "  Последний коммит: $(git log -1 --pretty='%h %s (%cr by %an)')"
 
 # Восстанавливаем stash если был
 if [[ "$LOCAL_CHANGES" -gt 0 ]]; then
@@ -115,8 +143,9 @@ fi
 log "Шаг 3/8: установка зависимостей (pnpm install)..."
 
 # Проверяем, менялся ли package.json или bun.lock
-PACKAGES_CHANGED=$(git diff --name-only "$BEFORE_COMMIT" "$AFTER_COMMIT" | grep -E '^(package\.json|bun\.lock|pnpm-lock\.yaml)$' | wc -l)
-if [[ "$PACKAGES_CHANGED" -gt 0 ]]; then
+# При --force — всегда выполняем pnpm install
+PACKAGES_CHANGED=$(git diff --name-only "$BEFORE_COMMIT" "$AFTER_COMMIT" 2>/dev/null | grep -E '^(package\.json|bun\.lock|pnpm-lock\.yaml)$' | wc -l)
+if [[ "$PACKAGES_CHANGED" -gt 0 ]] || [[ "$FORCE_REBUILD" == "true" ]]; then
     # pnpm может возвращать ненулевой exit code из-за warning'ов об ignored build
     # scripts (Prisma, sharp, @swc/core). Это не фатально — сами пакеты ставятся.
     # Поэтому отключаем pipefail на время pnpm install.
@@ -140,11 +169,15 @@ fi
 # -------- 4. Применение схемы БД --------
 log "Шаг 4/8: проверка схемы БД (prisma)..."
 
-SCHEMA_CHANGED=$(git diff --name-only "$BEFORE_COMMIT" "$AFTER_COMMIT" | grep -E '^prisma/schema\.prisma$' | wc -l)
+SCHEMA_CHANGED=$(git diff --name-only "$BEFORE_COMMIT" "$AFTER_COMMIT" 2>/dev/null | grep -E '^prisma/schema\.prisma$' | wc -l)
 if [[ "$SCHEMA_CHANGED" -gt 0 ]]; then
     warn "  Схема БД изменилась, применяю миграцию..."
     pnpm prisma db push
     ok "  Схема применена"
+elif [[ "$FORCE_REBUILD" == "true" ]]; then
+    warn "  --force: проверяю, что БД в синке со схемой..."
+    pnpm prisma db push
+    ok "  Схема синхронизирована"
 else
     ok "  Схема БД не менялась"
 fi
