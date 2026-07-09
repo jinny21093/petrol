@@ -1,0 +1,66 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+/// Точка покрытия — координата центра области запроса к геопорталу.
+/// Несколько точек покрывают весь город / область. Масштабируемо: можно добавлять точки для новых районов.
+model CoveragePoint {
+  id        String   @id @default(cuid())
+  name      String   // человекочитаемое название (например, "Центр", "Заречье")
+  mapX      Float    // Web Mercator X в метрах
+  mapY      Float    // Web Mercator Y в метрах
+  scale     Float    @default(156093.8619923378)
+  enabled   Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([enabled])
+}
+
+/// АЗС, обнаруженная на геопортале. Уникальна по externalId (id записи на геопортале).
+model Station {
+  id         String   @id @default(cuid())
+  externalId Int      @unique // id записи на геопортале (поле "id" в records[])
+  graphId    Int?     // graphId с геопортала
+  brand      String   @default("Неизвестно") // поле 6917
+  address    String   @default("")           // поле 6918
+  status     String   @default("Нет")        // поле 6919 ("Да" — работает)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  snapshots  FuelSnapshot[]
+  hidden     Boolean  @default(false) // вручную скрытые станции
+
+  @@index([brand])
+  @@index([status])
+}
+
+/// Снапшот остатков топлива на момент опроса. Один опрос = одна запись на АЗС.
+/// Хранит сырой текст деталей (6920) + распарсенные данные в JSON.
+model FuelSnapshot {
+  id             String   @id @default(cuid())
+  stationId      String
+  station        Station  @relation(fields: [stationId], references: [id], onDelete: Cascade)
+  rawDetails     String   @default("") // поле 6920 — сырой текст с остатками и комментариями
+  parsedFuels    String   @default("[]") // JSON-массив: [{ fuel: "92", liters: 5000, cars: 250 }]
+  sourceCreatedAt   DateTime? // поле 6921 — время создания записи на геопортале
+  sourceUpdatedAt   DateTime? // поле 6922 — время обновления записи на геопортале
+  fetchedAt      DateTime @default(now()) // когда мы опросили
+
+  @@index([stationId, fetchedAt])
+  @@index([fetchedAt])
+}
+
+/// Глобальные настройки системы (key-value).
+model Setting {
+  id    String @id
+  value String @default("")
+}
