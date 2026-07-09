@@ -94,10 +94,37 @@ ok "  Окружение готово"
 log "Шаг 2/8: получение обновлений из git..."
 
 # Сохраняем локальные изменения, если есть (например, в Caddyfile)
+# ВАЖНО: git status --porcelain может включать untracked файлы (например pnpm-lock.yaml).
+# Если stash падает из-за них — используем --include-untracked, чтобы добавить и их.
+# Но pnpm-lock.yaml package.json модифицируются самим pnpm install — их ЛУЧШЕ ОТБРОСИТЬ,
+# потому что они регенерируются из package.json.
 LOCAL_CHANGES=$(git status --porcelain 2>&1 | wc -l)
 if [[ "$LOCAL_CHANGES" -gt 0 ]]; then
-    warn "  Обнаружены локальные изменения ($LOCAL_CHANGES файлов). Сохраняю через git stash..."
-    git stash push -m "auto-stash before update $(date +%s)"
+    warn "  Обнаружены локальные изменения ($LOCAL_CHANGES файлов):"
+    git status --porcelain | sed 's/^/    /'
+
+    # Откатываем автоматически модифицированные pnpm-файлы — они регенерируются
+    if git status --porcelain | grep -qE '^.M package\.json$'; then
+        warn "  package.json модифицирован локально — откатываю (он восстановится из git)"
+        git checkout -- package.json 2>/dev/null || true
+    fi
+    if [[ -f pnpm-lock.yaml ]] && git status --porcelain | grep -qE '^\?\? pnpm-lock\.yaml$'; then
+        warn "  pnpm-lock.yaml untracked — удаляю (будет создан заново при pnpm install)"
+        rm -f pnpm-lock.yaml
+    fi
+    if [[ -f bun.lock ]] && git status --porcelain | grep -qE '^\?\? bun\.lock$'; then
+        warn "  bun.lock untracked — удаляю"
+        rm -f bun.lock
+    fi
+
+    # Проверяем, остались ли ещё локальные изменения
+    REMAINING_CHANGES=$(git status --porcelain 2>&1 | wc -l)
+    if [[ "$REMAINING_CHANGES" -gt 0 ]]; then
+        warn "  Остались локальные изменения ($REMAINING_CHANGES файлов). Сохраняю через git stash..."
+        git stash push -m "auto-stash before update $(date +%s)" --include-untracked || warn "  git stash не удался, продолжаю без него"
+    else
+        ok "  Все локальные изменения откачены, stash не нужен"
+    fi
 fi
 
 # Тянем свежий код
