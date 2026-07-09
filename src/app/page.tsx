@@ -992,6 +992,82 @@ export default function HomePage() {
       </header>
 
       <main className="flex-1 max-w-7xl mx-auto w-full px-4 sm:px-6 py-4 sm:py-6 space-y-4 sm:space-y-6">
+        {stats && stats.cookieStatus === 'expired' ? (
+          <Card className="border-red-500 bg-red-50 dark:bg-red-950/30">
+            <CardContent className="p-4 flex items-start gap-3">
+              <div className="shrink-0 rounded-full bg-red-100 dark:bg-red-900 p-2 text-red-600 dark:text-red-300">
+                <SettingsIcon className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-red-700 dark:text-red-300">JSESSIONID протухла — данные не обновляются</p>
+                <p className="text-sm text-red-600 dark:text-red-400 mt-1">
+                  Откройте{' '}
+                  <a
+                    href="https://3d-geoportal.vologda-city.ru/portal/gasstation"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="underline font-medium"
+                  >
+                    геопортал Вологды
+                  </a>{' '}
+                  в браузере, войдите через Госуслуги, скопируйте{' '}
+                  <code className="bg-red-100 dark:bg-red-900 px-1 rounded">JSESSIONID</code> из cookies
+                  и вставьте в табе «Настройки».
+                </p>
+                <p className="text-xs text-red-500 dark:text-red-400 mt-2">
+                  Последняя проверка: {fmtRelative(stats.cookieStatusAt)}
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {stats && stats.cookieStatus === 'not_set' ? (
+          <Card className="border-amber-500 bg-amber-50 dark:bg-amber-950/30">
+            <CardContent className="p-4 flex items-start gap-3">
+              <div className="shrink-0 rounded-full bg-amber-100 dark:bg-amber-900 p-2 text-amber-600 dark:text-amber-300">
+                <SettingsIcon className="w-5 h-5" />
+              </div>
+              <div className="flex-1 min-w-0">
+                <p className="font-medium text-amber-700 dark:text-amber-300">
+                  JSESSIONID не задана — данные с геопортала не получаются
+                </p>
+                <p className="text-sm text-amber-600 dark:text-amber-400 mt-1">
+                  Перейдите в таб «Настройки» и вставьте JSESSIONID. Как получить — см. инструкцию там же.
+                </p>
+              </div>
+            </CardContent>
+          </Card>
+        ) : null}
+
+        {stats && stats.cookieStatus === 'alive' ? (
+          <Card className="border-emerald-500/50 bg-emerald-50/50 dark:bg-emerald-950/20">
+            <CardContent className="p-3 flex items-center gap-3">
+              <div className="shrink-0 rounded-full bg-emerald-100 dark:bg-emerald-900 p-1.5 text-emerald-600 dark:text-emerald-300">
+                <svg
+                  xmlns="http://www.w3.org/2000/svg"
+                  width="16"
+                  height="16"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="3"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                >
+                  <polyline points="20 6 9 17 4 12"></polyline>
+                </svg>
+              </div>
+              <p className="text-sm text-emerald-700 dark:text-emerald-300">
+                JSESSIONID активна — опрос геопортала работает.
+                <span className="text-emerald-600 dark:text-emerald-400 ml-2 text-xs">
+                  Проверена {fmtRelative(stats.cookieStatusAt)}
+                </span>
+              </p>
+            </CardContent>
+          </Card>
+        ) : null}
+
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
           <StatCard
             icon={<Fuel className="w-5 h-5" />}

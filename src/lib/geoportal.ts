@@ -261,6 +261,18 @@ async function fetchStationsAtPoint(
   }
 
   const json = (await resp.json()) as SelResponse
+
+  // Детектор протухшей куки: геопортал вместо records возвращает
+  // {SupportESIA: true, login: {mms: [...]}} — это значит, что
+  // JSESSIONID не авторизована, нужен вход через Госуслуги.
+  if (!json.records && typeof json === 'object' && 'SupportESIA' in json) {
+    throw new Error(
+      'JSESSIONID протухла или не авторизована (геопортал требует ESIA-вход). ' +
+        'Откройте https://3d-geoportal.vologda-city.ru/portal/gasstation в браузере, ' +
+        'войддите через Госуслуги, скопируйте JSESSIONID из cookies и вставьте в Настройках дашборда.',
+    )
+  }
+
   const records = json.records || []
 
   return records.map((rec) => {
@@ -299,11 +311,71 @@ export interface RefreshResult {
   errors: string[]
   startedAt: Date
   finishedAt: Date
+  cookieStatus: CookieStatus
+}
+
+export type CookieStatus = 'alive' | 'expired' | 'not_set' | 'unknown'
+
+/**
+ * Проверить статус JSESSIONID, не делая тяжелый опрос АЗС.
+ * Лёгкий heartbeat-запрос: GET /api/info с текущей кукой.
+ * Если в ответе SupportESIA — кука протухла.
+ * Если ответ отличается — кука жива.
+ *
+ * Также обновляет setting 'cookieStatus' и 'cookieStatusAt'.
+ */
+export async function checkCookieStatus(): Promise<CookieStatus> {
+  const cookie = await getCookie()
+  if (!cookie) {
+    await saveSetting('cookieStatus', 'not_set')
+    await saveSetting('cookieStatusAt', new Date().toISOString())
+    return 'not_set'
+  }
+
+  try {
+    const resp = await fetch(`${BASE_URL}/api/info`, {
+      method: 'GET',
+      headers: {
+        'User-Agent':
+          'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:152.0) Gecko/20100101 Firefox/152.0',
+        Accept: 'application/json',
+        Cookie: cookie,
+      },
+    })
+    if (!resp.ok) {
+      // 401/403 — точно протухла
+      if (resp.status === 401 || resp.status === 403) {
+        await saveSetting('cookieStatus', 'expired')
+        await saveSetting('cookieStatusAt', new Date().toISOString())
+        return 'expired'
+      }
+      await saveSetting('cookieStatus', 'unknown')
+      await saveSetting('cookieStatusAt', new Date().toISOString())
+      return 'unknown'
+    }
+    const json = (await resp.json()) as Record<string, unknown>
+    // Если в ответе есть SupportESIA — кука не авторизована
+    if ('SupportESIA' in json) {
+      await saveSetting('cookieStatus', 'expired')
+      await saveSetting('cookieStatusAt', new Date().toISOString())
+      return 'expired'
+    }
+    await saveSetting('cookieStatus', 'alive')
+    await saveSetting('cookieStatusAt', new Date().toISOString())
+    return 'alive'
+  } catch {
+    await saveSetting('cookieStatus', 'unknown')
+    await saveSetting('cookieStatusAt', new Date().toISOString())
+    return 'unknown'
+  }
 }
 
 /**
  * Главный цикл опроса. Проходит по всем активным coverage-точкам,
  * обновляет/создаёт станции, сохраняет свежий снапшот остатков для каждой.
+ *
+ * Перед опросом проверяет статус куки через лёгкий запрос.
+ * Если кука протухла — сразу возвращает ошибку, не тратя время на 9 запросов.
  */
 export async function refreshAllStations(): Promise<RefreshResult> {
   const startedAt = new Date()
@@ -311,9 +383,44 @@ export async function refreshAllStations(): Promise<RefreshResult> {
   let stationsFound = 0
   let stationsNew = 0
   let stationsUpdated = 0
+  let cookieStatus: CookieStatus = 'unknown'
+
+  // Предварительная проверка куки — экономит 9 запросов если кука протухла
+  cookieStatus = await checkCookieStatus()
+  if (cookieStatus === 'not_set') {
+    errors.push('Не задана JSESSIONID — добавьте её в Настройках.')
+    return {
+      pointsProcessed: 0,
+      stationsFound: 0,
+      stationsNew: 0,
+      stationsUpdated: 0,
+      errors,
+      startedAt,
+      finishedAt: new Date(),
+      cookieStatus,
+    }
+  }
+  if (cookieStatus === 'expired') {
+    errors.push(
+      'JSESSIONID протухла. Откройте https://3d-geoportal.vologda-city.ru/portal/gasstation ' +
+        'в браузере, войдите через Госуслуги, скопируйте JSESSIONID из cookies и вставьте в Настройках.',
+    )
+    return {
+      pointsProcessed: 0,
+      stationsFound: 0,
+      stationsNew: 0,
+      stationsUpdated: 0,
+      errors,
+      startedAt,
+      finishedAt: new Date(),
+      cookieStatus,
+    }
+  }
 
   const cookie = await getCookie()
   if (!cookie) {
+    // на всякий случай — вдруг кука исчезла между проверкой и использованием
+    cookieStatus = 'not_set'
     errors.push('Не удалось получить JSESSIONID — задайте её в настройках.')
     return {
       pointsProcessed: 0,
@@ -323,13 +430,17 @@ export async function refreshAllStations(): Promise<RefreshResult> {
       errors,
       startedAt,
       finishedAt: new Date(),
+      cookieStatus,
     }
   }
 
   const points = await db.coveragePoint.findMany({ where: { enabled: true } })
+  let firstErrorWasExpired = false
   for (const p of points) {
     try {
       const found = await fetchStationsAtPoint(p.mapX, p.mapY, p.scale, cookie)
+      // Успешный ответ — кука точно жива
+      cookieStatus = 'alive'
       stationsFound += found.length
       for (const s of found) {
         // upsert по externalId
@@ -377,7 +488,16 @@ export async function refreshAllStations(): Promise<RefreshResult> {
         })
       }
     } catch (e) {
-      errors.push(`Точка "${p.name}": ${e instanceof Error ? e.message : String(e)}`)
+      const msg = e instanceof Error ? e.message : String(e)
+      errors.push(`Точка "${p.name}": ${msg}`)
+      // Если первая же точка упала с ошибкой про ESIA — кука протухла, прерываем
+      if (msg.includes('ESIA') && !firstErrorWasExpired) {
+        firstErrorWasExpired = true
+        cookieStatus = 'expired'
+        await saveSetting('cookieStatus', 'expired')
+        await saveSetting('cookieStatusAt', new Date().toISOString())
+        break
+      }
     }
   }
 
@@ -395,6 +515,7 @@ export async function refreshAllStations(): Promise<RefreshResult> {
     errors,
     startedAt,
     finishedAt: new Date(),
+    cookieStatus,
   }
 }
 

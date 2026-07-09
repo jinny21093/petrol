@@ -48,6 +48,8 @@ export interface Stats {
   enabledPoints: number
   totalSnapshots: number
   lastRefreshAt: string | null
+  cookieStatus: 'alive' | 'expired' | 'not_set' | 'unknown'
+  cookieStatusAt: string | null
   brands: { brand: string; count: number }[]
 }
 
@@ -59,6 +61,7 @@ export interface RefreshResult {
   errors: string[]
   startedAt: string
   finishedAt: string
+  cookieStatus: 'alive' | 'expired' | 'not_set' | 'unknown'
 }
 
 async function jfetch<T>(url: string, init?: RequestInit): Promise<T> {

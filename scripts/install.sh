@@ -381,13 +381,21 @@ CRON_MARK_END="# <<< vologda-azs end <<<"
 
 if command -v crontab &> /dev/null; then
     # Удаляем старый блок между метками и добавляем новый
+    # 3 задачи:
+    #   1) Каждые 5 минут — heartbeat: проверка куки (продлевает сессию, обновляет cookieStatus)
+    #   2) Каждые 10 минут — полный опрос АЗС (cron-refresh.sh сам делает cookie-check перед опросом)
+    #   3) Каждый день в 03:00 — бэкап БД
     ( crontab -u "$RUN_USER" -l 2>/dev/null | sed "/$CRON_MARK_BEGIN/,/$CRON_MARK_END/d" ; \
       echo "$CRON_MARK_BEGIN" ; \
+      echo "*/5 * * * * curl -fsS -m 10 -X GET http://127.0.0.1:3000/api/cookie-check > /dev/null 2>&1 || true" ; \
       echo "*/$REFRESH_INTERVAL_MIN * * * * bash $INSTALL_DIR/scripts/cron-refresh.sh >> /var/log/vologda-azs/cron.log 2>&1 || true" ; \
       echo "0 3 * * * sqlite3 $INSTALL_DIR/db/custom.db \".backup '/var/backups/vologda-azs/\$(date +\\%F).db'\" && find /var/backups/vologda-azs -mtime +14 -delete > /dev/null 2>&1 || true" ; \
       echo "$CRON_MARK_END" \
     ) | crontab -u "$RUN_USER" -
-    ok "  Cron настроен (обновление каждые $REFRESH_INTERVAL_MIN мин, бэкап БД в 03:00 ежедневно)"
+    ok "  Cron настроен:"
+    ok "    • каждые 5 мин — heartbeat (продление сессии + проверка куки)"
+    ok "    • каждые $REFRESH_INTERVAL_MIN мин — опрос АЗС"
+    ok "    • ежедневно в 03:00 — бэкап БД"
 else
     warn "  crontab недоступен — cron-задачи НЕ настроены."
     warn "  Установите cron и перезапустите скрипт: sudo apt install -y cron"

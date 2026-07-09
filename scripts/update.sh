@@ -41,7 +41,7 @@ cd "$INSTALL_DIR"
 log "Папка проекта: $INSTALL_DIR"
 
 # -------- 1. Проверка предусловий --------
-log "Шаг 1/7: проверка окружения..."
+log "Шаг 1/8: проверка окружения..."
 
 if [[ ! -d ".git" ]]; then
     err "Это не git-репозиторий. Запускайте из корня проекта."
@@ -69,7 +69,7 @@ fi
 ok "  Окружение готово"
 
 # -------- 2. git pull --------
-log "Шаг 2/7: получение обновлений из git..."
+log "Шаг 2/8: получение обновлений из git..."
 
 # Сохраняем локальные изменения, если есть (например, в Caddyfile)
 LOCAL_CHANGES=$(git status --porcelain 2>&1 | wc -l)
@@ -112,7 +112,7 @@ if [[ "$LOCAL_CHANGES" -gt 0 ]]; then
 fi
 
 # -------- 3. Установка зависимостей --------
-log "Шаг 3/7: установка зависимостей (pnpm install)..."
+log "Шаг 3/8: установка зависимостей (pnpm install)..."
 
 # Проверяем, менялся ли package.json или bun.lock
 PACKAGES_CHANGED=$(git diff --name-only "$BEFORE_COMMIT" "$AFTER_COMMIT" | grep -E '^(package\.json|bun\.lock|pnpm-lock\.yaml)$' | wc -l)
@@ -138,7 +138,7 @@ else
 fi
 
 # -------- 4. Применение схемы БД --------
-log "Шаг 4/7: проверка схемы БД (prisma)..."
+log "Шаг 4/8: проверка схемы БД (prisma)..."
 
 SCHEMA_CHANGED=$(git diff --name-only "$BEFORE_COMMIT" "$AFTER_COMMIT" | grep -E '^prisma/schema\.prisma$' | wc -l)
 if [[ "$SCHEMA_CHANGED" -gt 0 ]]; then
@@ -166,7 +166,7 @@ if [[ -f "scripts/reparse-snapshots.ts" ]]; then
 fi
 
 # -------- 5. Сборка Next.js --------
-log "Шаг 5/7: сборка Next.js (output: standalone)..."
+log "Шаг 5/8: сборка Next.js (output: standalone)..."
 
 pnpm build
 
@@ -184,7 +184,7 @@ fi
 ok "  Сборка готова"
 
 # -------- 6. Перезапуск PM2 --------
-log "Шаг 6/7: перезапуск PM2..."
+log "Шаг 6/8: перезапуск PM2..."
 
 pm2 restart "$APP_NAME" --update-env 2>&1 || {
     warn "  Приложение не запущено в PM2, пытаюсь запустить..."
@@ -219,7 +219,7 @@ fi
 ok "  PM2: $APP_NAME online"
 
 # -------- 7. Проверка работоспособности --------
-log "Шаг 7/7: проверка, что приложение отвечает на :3000..."
+log "Шаг 7/8: проверка, что приложение отвечает на :3000..."
 
 HEALTH_OK=false
 for i in 1 2 3 4 5; do
@@ -239,6 +239,29 @@ if [[ "$HEALTH_OK" != "true" ]]; then
 fi
 
 ok "  Приложение отвечает (HTTP 200)"
+
+# -------- 8. Обновление cron-задач (на случай изменений) --------
+log "Шаг 8/8: обновление cron-задач..."
+
+# Создаём папки для логов и бэкапов (на случай, если install.sh не запускался)
+mkdir -p /var/log/vologda-azs /var/backups/vologda-azs 2>/dev/null || true
+
+CRON_MARK_BEGIN="# >>> vologda-azs begin >>>"
+CRON_MARK_END="# <<< vologda-azs end <<<"
+
+# Определяем, от какого пользователя крутится приложение
+CRON_USER="${RUN_USER:-${SUDO_USER:-$USER}}"
+
+# Удаляем старый блок и добавляем новый (актуальный набор задач)
+( crontab -u "$CRON_USER" -l 2>/dev/null | sed "/$CRON_MARK_BEGIN/,/$CRON_MARK_END/d" ; \
+  echo "$CRON_MARK_BEGIN" ; \
+  echo "*/5 * * * * curl -fsS -m 10 -X GET http://127.0.0.1:3000/api/cookie-check > /dev/null 2>&1 || true" ; \
+  echo "*/10 * * * * bash $(pwd)/scripts/cron-refresh.sh >> /var/log/vologda-azs/cron.log 2>&1 || true" ; \
+  echo "0 3 * * * sqlite3 $(pwd)/db/custom.db \".backup '/var/backups/vologda-azs/\$(date +\\%F).db'\" && find /var/backups/vologda-azs -mtime +14 -delete > /dev/null 2>&1 || true" ; \
+  echo "$CRON_MARK_END" \
+) | crontab -u "$CRON_USER" -
+
+ok "  Cron обновлён (heartbeat каждые 5 мин, опрос каждые 10 мин, бэкап в 03:00)"
 
 # -------- Финальный отчёт --------
 END_TIME=$(date +%s)
