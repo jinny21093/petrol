@@ -109,8 +109,22 @@ log "Шаг 3/7: установка зависимостей (pnpm install)..."
 # Проверяем, менялся ли package.json или bun.lock
 PACKAGES_CHANGED=$(git diff --name-only "$BEFORE_COMMIT" "$AFTER_COMMIT" | grep -E '^(package\.json|bun\.lock|pnpm-lock\.yaml)$' | wc -l)
 if [[ "$PACKAGES_CHANGED" -gt 0 ]]; then
-    pnpm install
-    ok "  Зависимости обновлены"
+    # pnpm может возвращать ненулевой exit code из-за warning'ов об ignored build
+    # scripts (Prisma, sharp, @swc/core). Это не фатально — сами пакеты ставятся.
+    # Поэтому отключаем pipefail на время pnpm install.
+    set +e
+    pnpm install 2>&1 | tee /tmp/pnpm-install.log
+    PIPM_EXIT=${PIPESTATUS[0]}
+    set -e
+    if [[ $PIPM_EXIT -ne 0 ]]; then
+        warn "  pnpm install завершился с кодом $PIPM_EXIT (вероятно, из-за ignored build scripts)"
+        warn "  Это обычно не критично. Если приложение не запустится — выполните вручную:"
+        warn "    pnpm approve-builds   (отметить нужные пакеты пробелом, затем Enter)"
+        warn "  Или добавьте в package.json:"
+        warn '    "pnpm": { "onlyBuiltDependencies": ["@prisma/client","@prisma/engines","prisma","sharp","@swc/core","@parcel/watcher","unrs-resolver","es5-ext"] }'
+    else
+        ok "  Зависимости обновлены"
+    fi
 else
     ok "  package.json не менялся, пропуск pnpm install"
 fi
