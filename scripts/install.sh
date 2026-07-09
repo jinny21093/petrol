@@ -85,7 +85,7 @@ else
     ok "  Node.js уже установлен: $(node -v)"
 fi
 
-apt-get install -y git sqlite3 build-essential
+apt-get install -y git sqlite3 build-essential cron
 
 # pnpm и PM2
 if ! command -v pnpm &> /dev/null; then
@@ -267,6 +267,22 @@ ok "  Сайт будет доступен на https://$DOMAIN (через 30-6
 # -------- 9. Cron: автообновление + бэкапы --------
 log "Шаг 9/9: настройка cron (автообновление каждые $REFRESH_INTERVAL_MIN мин + бэкап БД)..."
 
+# Проверяем, что crontab доступен
+if ! command -v crontab &> /dev/null; then
+    warn "  crontab не найден. Устанавливаю пакет cron..."
+    apt-get install -y cron
+    systemctl enable cron || true
+    systemctl start cron || true
+fi
+
+if ! command -v crontab &> /dev/null; then
+    err "  Не удалось установить crontab. Cron-задачи не настроены."
+    err "  Установите вручную: sudo apt install -y cron"
+    err "  Затем перезапустите этот скрипт."
+else
+    ok "  crontab доступен: $(which crontab)"
+fi
+
 # Папка бэкапов
 mkdir -p /var/backups/vologda-azs
 chown "$RUN_USER":"$RUN_USER" /var/backups/vologda-azs
@@ -275,15 +291,19 @@ chown "$RUN_USER":"$RUN_USER" /var/backups/vologda-azs
 CRON_MARK_BEGIN="# >>> vologda-azs begin >>>"
 CRON_MARK_END="# <<< vologda-azs end <<<"
 
-# Удаляем старый блок между метками
-( crontab -u "$RUN_USER" -l 2>/dev/null | sed "/$CRON_MARK_BEGIN/,/$CRON_MARK_END/d" ; \
-  echo "$CRON_MARK_BEGIN" ; \
-  echo "*/$REFRESH_INTERVAL_MIN * * * * bash $INSTALL_DIR/scripts/cron-refresh.sh >> /var/log/vologda-azs/cron.log 2>&1 || true" ; \
-  echo "0 3 * * * sqlite3 $INSTALL_DIR/db/custom.db \".backup '/var/backups/vologda-azs/\$(date +\\%F).db'\" && find /var/backups/vologda-azs -mtime +14 -delete > /dev/null 2>&1 || true" ; \
-  echo "$CRON_MARK_END" \
-) | crontab -u "$RUN_USER" -
-
-ok "  Cron настроен (обновление каждые $REFRESH_INTERVAL_MIN мин, бэкап БД в 03:00 ежедневно)"
+if command -v crontab &> /dev/null; then
+    # Удаляем старый блок между метками и добавляем новый
+    ( crontab -u "$RUN_USER" -l 2>/dev/null | sed "/$CRON_MARK_BEGIN/,/$CRON_MARK_END/d" ; \
+      echo "$CRON_MARK_BEGIN" ; \
+      echo "*/$REFRESH_INTERVAL_MIN * * * * bash $INSTALL_DIR/scripts/cron-refresh.sh >> /var/log/vologda-azs/cron.log 2>&1 || true" ; \
+      echo "0 3 * * * sqlite3 $INSTALL_DIR/db/custom.db \".backup '/var/backups/vologda-azs/\$(date +\\%F).db'\" && find /var/backups/vologda-azs -mtime +14 -delete > /dev/null 2>&1 || true" ; \
+      echo "$CRON_MARK_END" \
+    ) | crontab -u "$RUN_USER" -
+    ok "  Cron настроен (обновление каждые $REFRESH_INTERVAL_MIN мин, бэкап БД в 03:00 ежедневно)"
+else
+    warn "  crontab недоступен — cron-задачи НЕ настроены."
+    warn "  Установите cron и перезапустите скрипт: sudo apt install -y cron"
+fi
 
 # -------- Финальный отчёт --------
 echo ""
