@@ -225,3 +225,93 @@ export function useSettings() {
 
   return { settings, loading, reload, save }
 }
+
+export interface StationHistoryPoint {
+  fetchedAt: string
+  sourceUpdatedAt: string | null
+  fuels: Record<string, number | null>
+}
+
+export interface StationHistory {
+  station: { id: string; brand: string; address: string; status: string }
+  fuelTypes: string[]
+  points: StationHistoryPoint[]
+  totalSnapshots: number
+  hoursRequested: number
+}
+
+export function useStationHistory(stationId: string | null, hours = 24) {
+  const [history, setHistory] = useState<StationHistory | null>(null)
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const reload = useCallback(async () => {
+    if (!stationId) {
+      setHistory(null)
+      return
+    }
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await jfetch<StationHistory>(
+        `/api/stations/${encodeURIComponent(stationId)}/history?hours=${hours}`,
+      )
+      setHistory(r)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setHistory(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [stationId, hours])
+
+  useEffect(() => {
+    reload()
+  }, [reload])
+
+  return { history, loading, error, reload }
+}
+
+export interface AnalyticsPoint {
+  fetchedAt: string
+  totalsByFuel: Record<string, number>
+  activeStations: number
+  totalStations: number
+}
+
+export interface Analytics {
+  fuelTypes: string[]
+  points: AnalyticsPoint[]
+  brandBreakdown: { brand: string; count: number }[]
+  totalStations: number
+  totalActiveStations: number
+  totalSnapshots: number
+  hoursRequested: number
+  bucketSize: string
+}
+
+export function useAnalytics(hours = 24) {
+  const [analytics, setAnalytics] = useState<Analytics | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const r = await jfetch<Analytics>(`/api/analytics?hours=${hours}`)
+      setAnalytics(r)
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      setAnalytics(null)
+    } finally {
+      setLoading(false)
+    }
+  }, [hours])
+
+  useEffect(() => {
+    reload()
+  }, [reload])
+
+  return { analytics, loading, error, reload }
+}

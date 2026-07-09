@@ -1,7 +1,31 @@
 'use client'
 
 import { useMemo, useState } from 'react'
-import { Fuel, MapPin, Plus, RefreshCw, Settings as SettingsIcon, Activity, Layers, Zap } from 'lucide-react'
+import {
+  Fuel,
+  MapPin,
+  Plus,
+  RefreshCw,
+  Settings as SettingsIcon,
+  Activity,
+  Layers,
+  Zap,
+  TrendingUp,
+  BarChart3,
+  History,
+} from 'lucide-react'
+import {
+  LineChart,
+  Line,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+  Area,
+  AreaChart,
+} from 'recharts'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card'
@@ -28,6 +52,8 @@ import {
   useStats,
   useRefresh,
   useSettings,
+  useStationHistory,
+  useAnalytics,
   type Station,
   type CoveragePoint,
 } from '@/lib/hooks'
@@ -90,7 +116,7 @@ function StatCard({
   )
 }
 
-function StationCard({ s }: { s: Station }) {
+function StationCard({ s, onShowHistory }: { s: Station; onShowHistory?: (s: Station) => void }) {
   const isActive = s.status === 'Да'
   const fuels = s.latestSnapshot?.parsedFuels?.fuels || []
   const comment = s.latestSnapshot?.parsedFuels?.comment
@@ -151,8 +177,368 @@ function StationCard({ s }: { s: Station }) {
             {s.latestSnapshot.rawDetails}
           </p>
         ) : null}
+
+        {onShowHistory ? (
+          <Button
+            variant="ghost"
+            size="sm"
+            className="mt-3 w-full"
+            onClick={() => onShowHistory(s)}
+          >
+            <History className="w-4 h-4 mr-2" />
+            История остатков
+          </Button>
+        ) : null}
       </CardContent>
     </Card>
+  )
+}
+
+// Цвета для графиков — палитра из 8 цветов, циклически
+const CHART_COLORS = ['#10b981', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316']
+
+function fmtChartTime(iso: string): string {
+  const d = new Date(iso)
+  return d.toLocaleString('ru-RU', {
+    day: '2-digit',
+    month: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+  })
+}
+
+function fmtLiters(n: number): string {
+  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(2)}M л`
+  if (n >= 1_000) return `${(n / 1_000).toFixed(1)}K л`
+  return `${Math.round(n)} л`
+}
+
+function StationHistoryDialog({ station, onClose }: { station: Station | null; onClose: () => void }) {
+  const [hours, setHours] = useState(24)
+  const { history, loading, error } = useStationHistory(station?.id ?? null, hours)
+
+  // Трансформируем точки в формат для recharts: [{ time: "10:00", "92": 5000, "95": 17000 }, ...]
+  const chartData = useMemo(() => {
+    if (!history) return []
+    return history.points.map((p) => ({
+      time: fmtChartTime(p.fetchedAt),
+      ...Object.fromEntries(
+        history.fuelTypes.map((ft) => [ft, p.fuels[ft] ?? null]),
+      ),
+    }))
+  }, [history])
+
+  return (
+    <Dialog open={!!station} onOpenChange={(v) => !v && onClose()}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden flex flex-col">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2 flex-wrap">
+            <History className="w-5 h-5" />
+            <span>{station?.brand || 'Без бренда'}</span>
+            {station ? (
+              <span className="text-sm text-muted-foreground font-normal truncate">
+                · {station.address}
+              </span>
+            ) : null}
+          </DialogTitle>
+          <DialogDescription>
+            История остатков топлива по этой АЗС. Данные собираются автоматически каждые 10 минут.
+          </DialogDescription>
+        </DialogHeader>
+
+        <div className="flex items-center gap-2 pb-2">
+          <span className="text-sm text-muted-foreground">Период:</span>
+          {[
+            { v: 6, label: '6 часов' },
+            { v: 24, label: '24 часа' },
+            { v: 72, label: '3 дня' },
+            { v: 168, label: '7 дней' },
+          ].map((opt) => (
+            <Button
+              key={opt.v}
+              variant={hours === opt.v ? 'default' : 'outline'}
+              size="sm"
+              onClick={() => setHours(opt.v)}
+            >
+              {opt.label}
+            </Button>
+          ))}
+        </div>
+
+        <div className="flex-1 overflow-auto">
+          {loading ? (
+            <div className="h-64 flex items-center justify-center">
+              <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
+            </div>
+          ) : error ? (
+            <div className="p-4 text-sm text-red-600">{error}</div>
+          ) : !history || history.points.length === 0 ? (
+            <div className="p-8 text-center text-muted-foreground">
+              <History className="w-10 h-10 mx-auto mb-3 opacity-30" />
+              <p>Нет исторических данных за выбранный период.</p>
+              <p className="text-sm mt-1">
+                Возможно, АЗС только что добавлена или опрос ещё не запускался.
+              </p>
+            </div>
+          ) : (
+            <div className="space-y-4">
+              <div className="rounded-md border bg-muted/40 p-3 text-sm">
+                <span className="text-muted-foreground">Снапшотов за период: </span>
+                <span className="font-semibold tabular-nums">{history.totalSnapshots}</span>
+                <span className="text-muted-foreground"> · Первая точка: </span>
+                <span className="font-medium tabular-nums">
+                  {history.points[0] ? fmtChartTime(history.points[0].fetchedAt) : '—'}
+                </span>
+                <span className="text-muted-foreground"> · Последняя: </span>
+                <span className="font-medium tabular-nums">
+                  {history.points[history.points.length - 1]
+                    ? fmtChartTime(history.points[history.points.length - 1].fetchedAt)
+                    : '—'}
+                </span>
+              </div>
+
+              <div className="w-full h-72">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="time" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtLiters} width={70} />
+                    <Tooltip
+                      formatter={(v: number) => fmtLiters(v)}
+                      labelStyle={{ fontSize: 12 }}
+                      contentStyle={{ fontSize: 12 }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    {history.fuelTypes.map((ft, i) => (
+                      <Line
+                        key={ft}
+                        type="monotone"
+                        dataKey={ft}
+                        name={`АИ-${ft}`}
+                        stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                        strokeWidth={2}
+                        dot={false}
+                        connectNulls
+                      />
+                    ))}
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+          )}
+        </div>
+      </DialogContent>
+    </Dialog>
+  )
+}
+
+function AnalyticsPanel() {
+  const [hours, setHours] = useState(24)
+  const { analytics, loading, error } = useAnalytics(hours)
+
+  const chartData = useMemo(() => {
+    if (!analytics) return []
+    return analytics.points.map((p) => ({
+      time: fmtChartTime(p.fetchedAt),
+      ...Object.fromEntries(
+        analytics.fuelTypes.map((ft) => [ft, p.totalsByFuel[ft] ?? 0]),
+      ),
+      activeStations: p.activeStations,
+      totalStations: p.totalStations,
+    }))
+  }, [analytics])
+
+  return (
+    <div className="space-y-4">
+      <Card>
+        <CardContent className="p-3 sm:p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+          <div>
+            <p className="font-medium flex items-center gap-2">
+              <BarChart3 className="w-4 h-4" />
+              Аналитика по городу
+            </p>
+            <p className="text-sm text-muted-foreground mt-1">
+              Суммарные остатки по каждому типу топлива во времени. Источник — все опрошенные АЗС.
+            </p>
+          </div>
+          <div className="flex items-center gap-2">
+            {[
+              { v: 6, label: '6ч' },
+              { v: 24, label: '24ч' },
+              { v: 72, label: '3д' },
+              { v: 168, label: '7д' },
+            ].map((opt) => (
+              <Button
+                key={opt.v}
+                variant={hours === opt.v ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setHours(opt.v)}
+              >
+                {opt.label}
+              </Button>
+            ))}
+          </div>
+        </CardContent>
+      </Card>
+
+      {error ? (
+        <Card>
+          <CardContent className="p-4 text-sm text-red-600">{error}</CardContent>
+        </Card>
+      ) : null}
+
+      {loading ? (
+        <Card>
+          <CardContent className="p-8 flex items-center justify-center">
+            <RefreshCw className="w-6 h-6 animate-spin text-muted-foreground" />
+          </CardContent>
+        </Card>
+      ) : !analytics || analytics.points.length === 0 ? (
+        <Card>
+          <CardContent className="p-8 text-center text-muted-foreground">
+            <TrendingUp className="w-10 h-10 mx-auto mb-3 opacity-30" />
+            <p>Недостаточно данных для построения графиков.</p>
+            <p className="text-sm mt-1">
+              Нужно хотя бы 2 опроса. Подождите 10-20 минут или нажмите «Обновить данные» в шапке.
+            </p>
+          </CardContent>
+        </Card>
+      ) : (
+        <>
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+            <StatCard
+              icon={<Fuel className="w-5 h-5" />}
+              label="Всего АЗС"
+              value={analytics.totalStations}
+              hint={`работает: ${analytics.totalActiveStations}`}
+            />
+            <StatCard
+              icon={<Activity className="w-5 h-5" />}
+              label="Снапшотов"
+              value={analytics.totalSnapshots}
+              hint={`за ${hours} ч`}
+            />
+            <StatCard
+              icon={<TrendingUp className="w-5 h-5" />}
+              label="Типов топлива"
+              value={analytics.fuelTypes.length}
+              hint={analytics.fuelTypes.map((t) => `АИ-${t}`).join(', ')}
+            />
+            <StatCard
+              icon={<Layers className="w-5 h-5" />}
+              label="Брендов"
+              value={analytics.brandBreakdown.length}
+              hint={`группировка: ${analytics.bucketSize}`}
+            />
+          </div>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Суммарные остатки по типам топлива</CardTitle>
+              <CardDescription>
+                Литраж по всем АЗС в каждый момент опроса. Рост = станции дозаправляются подвозом, спад = топливо раскупают.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="w-full h-80">
+                <ResponsiveContainer width="100%" height="100%">
+                  <AreaChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                    <defs>
+                      {analytics.fuelTypes.map((ft, i) => (
+                        <linearGradient key={ft} id={`grad-${ft}`} x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="5%" stopColor={CHART_COLORS[i % CHART_COLORS.length]} stopOpacity={0.6} />
+                          <stop offset="95%" stopColor={CHART_COLORS[i % CHART_COLORS.length]} stopOpacity={0.05} />
+                        </linearGradient>
+                      ))}
+                    </defs>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="time" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 11 }} tickFormatter={fmtLiters} width={70} />
+                    <Tooltip
+                      formatter={(v: number) => fmtLiters(v)}
+                      labelStyle={{ fontSize: 12 }}
+                      contentStyle={{ fontSize: 12 }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    {analytics.fuelTypes.map((ft, i) => (
+                      <Area
+                        key={ft}
+                        type="monotone"
+                        dataKey={ft}
+                        name={`АИ-${ft}`}
+                        stroke={CHART_COLORS[i % CHART_COLORS.length]}
+                        strokeWidth={2}
+                        fill={`url(#grad-${ft})`}
+                        connectNulls
+                      />
+                    ))}
+                  </AreaChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Работающие АЗС во времени</CardTitle>
+              <CardDescription>
+                Сколько АЗС имели статус «Работает» в каждый момент опроса.
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="w-full h-56">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                    <CartesianGrid strokeDasharray="3 3" opacity={0.3} />
+                    <XAxis dataKey="time" tick={{ fontSize: 11 }} interval="preserveStartEnd" />
+                    <YAxis tick={{ fontSize: 11 }} width={40} allowDecimals={false} />
+                    <Tooltip
+                      labelStyle={{ fontSize: 12 }}
+                      contentStyle={{ fontSize: 12 }}
+                    />
+                    <Legend wrapperStyle={{ fontSize: 12 }} />
+                    <Line
+                      type="stepAfter"
+                      dataKey="activeStations"
+                      name="Работает"
+                      stroke="#10b981"
+                      strokeWidth={2}
+                      dot={{ r: 3 }}
+                    />
+                    <Line
+                      type="stepAfter"
+                      dataKey="totalStations"
+                      name="Всего"
+                      stroke="#6b7280"
+                      strokeWidth={1.5}
+                      strokeDasharray="5 5"
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader className="pb-3">
+              <CardTitle className="text-base">Распределение по брендам</CardTitle>
+              <CardDescription>Сколько АЗС каждого бренда обнаружено на геопортале.</CardDescription>
+            </CardHeader>
+            <CardContent>
+              <div className="flex flex-wrap gap-2">
+                {analytics.brandBreakdown.map((b) => (
+                  <Badge key={b.brand} variant="outline" className="gap-1 px-3 py-1 text-sm">
+                    {b.brand || 'Без бренда'}
+                    <span className="text-muted-foreground tabular-nums">{b.count}</span>
+                  </Badge>
+                ))}
+              </div>
+            </CardContent>
+          </Card>
+        </>
+      )}
+    </div>
   )
 }
 
@@ -163,6 +549,7 @@ function StationsPanel() {
   const [brandFilter, setBrandFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<string>('all')
   const [search, setSearch] = useState('')
+  const [historyStation, setHistoryStation] = useState<Station | null>(null)
 
   const brands = useMemo(() => {
     const set = new Set<string>()
@@ -273,10 +660,12 @@ function StationsPanel() {
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           {filtered.map((s) => (
-            <StationCard key={s.id} s={s} />
+            <StationCard key={s.id} s={s} onShowHistory={setHistoryStation} />
           ))}
         </div>
       )}
+
+      <StationHistoryDialog station={historyStation} onClose={() => setHistoryStation(null)} />
     </div>
   )
 }
@@ -637,13 +1026,17 @@ export default function HomePage() {
         ) : null}
 
         <Tabs defaultValue="stations" className="w-full">
-          <TabsList className="w-full sm:w-auto grid grid-cols-3 sm:flex">
+          <TabsList className="w-full sm:w-auto grid grid-cols-4 sm:flex">
             <TabsTrigger value="stations">АЗС</TabsTrigger>
+            <TabsTrigger value="analytics">Аналитика</TabsTrigger>
             <TabsTrigger value="coverage">Coverage-точки</TabsTrigger>
             <TabsTrigger value="settings">Настройки</TabsTrigger>
           </TabsList>
           <TabsContent value="stations" className="mt-4">
             <StationsPanel />
+          </TabsContent>
+          <TabsContent value="analytics" className="mt-4">
+            <AnalyticsPanel />
           </TabsContent>
           <TabsContent value="coverage" className="mt-4">
             <CoveragePanel />
