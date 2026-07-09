@@ -56,8 +56,9 @@ async function main() {
       )
     }
 
+    const withCoords = stations.find((s) => s.longitude !== null && s.latitude !== null)
     const platforma35 = stations.find((s) => s.source === 'platforma35')
-    const keeper = platforma35 || stations[0]
+    const keeper = withCoords || platforma35 || stations[0]
     const losers = stations.filter((s) => s.id !== keeper.id)
 
     console.log(`  → оставляем: id=${keeper.id} (source=${keeper.source || 'null'})`)

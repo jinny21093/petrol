@@ -60,9 +60,11 @@ async function main() {
       )
     }
 
-    // Находим "лучшую" станцию — prefer platforma35 (есть координаты и логотип)
+    // Находим "лучшую" станцию — prefer с координатами (это реально новая от platforma35).
+    // Если ни у одной нет координат — prefer source='platforma35', иначе первая.
+    const withCoords = stations.find((s) => s.longitude !== null && s.latitude !== null)
     const platforma35 = stations.find((s) => s.source === 'platforma35')
-    const keeper = platforma35 || stations[0]
+    const keeper = withCoords || platforma35 || stations[0]
     const losers = stations.filter((s) => s.id !== keeper.id)
 
     console.log(`  → оставляем: id=${keeper.id} (source=${keeper.source || 'null'})`)
