@@ -58,6 +58,14 @@ if ! command -v pm2 &> /dev/null; then
     exit 1
 fi
 
+# bun опционален — без него скрипты .ts запустятся через .mjs fallback
+if command -v bun &> /dev/null; then
+    ok "  bun: $(bun --version) — будет использоваться для .ts скриптов"
+else
+    warn "  bun не установлен — .ts скрипты будут запускаться через node + .mjs"
+    warn "  Рекомендуется установить: sudo npm install -g bun"
+fi
+
 ok "  Окружение готово"
 
 # -------- 2. git pull --------
@@ -146,9 +154,15 @@ ok "  Prisma Client сгенерирован"
 
 # Перепарсить существующие снапшоты, если менялся парсер топлива
 # (быстро: просто перезаписывает parsedFuels для всех записей)
-if [[ -f "scripts/reparse-snapshots.mjs" ]]; then
+if [[ -f "scripts/reparse-snapshots.ts" ]]; then
     log "  Перепарсинг существующих снапшотов (на случай обновления парсера)..."
-    node scripts/reparse-snapshots.mjs 2>&1 | tail -5 || warn "  Перепарсинг не удался (не критично, продолжаю)"
+    if command -v bun &> /dev/null; then
+        # Preferred: bun умеет запускать .ts напрямую, без компиляции
+        bun run scripts/reparse-snapshots.ts 2>&1 | tail -5 || warn "  Перепарсинг не удался (не критично, продолжаю)"
+    elif [[ -f "scripts/reparse-snapshots.mjs" ]]; then
+        # Fallback: node + .mjs (если bun не установлен)
+        node scripts/reparse-snapshots.mjs 2>&1 | tail -5 || warn "  Перепарсинг не удался (не критично, продолжаю)"
+    fi
 fi
 
 # -------- 5. Сборка Next.js --------

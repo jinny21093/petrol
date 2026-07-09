@@ -19,6 +19,25 @@
 - **Backend:** Next.js API Routes
 - **БД:** Prisma ORM + SQLite
 - **Сборка:** standalone output (готово к PM2 + Caddy деплою)
+- **Runtime:** Node.js 20 (продакшен) + bun (для запуска .ts скриптов)
+
+## Удобные команды (после `pnpm install`)
+
+```bash
+# Разработка
+pnpm dev                    # запуск в режиме dev (с hot reload)
+pnpm lint                   # проверка ESLint
+pnpm build                  # production-сборка (output: standalone)
+
+# БД
+pnpm db:push                # применить схему Prisma к SQLite
+pnpm db:generate            # перегенерировать Prisma Client
+
+# Утилиты (требуется установленный bun: sudo npm install -g bun)
+pnpm test:parser            # тесты парсера топлива (8 кейсов)
+pnpm reparse                # перепарсить все существующие снапшоты в БД
+                            # (после обновления парсера в src/lib/geoportal.ts)
+```
 
 ## Структура БД
 

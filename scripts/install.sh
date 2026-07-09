@@ -131,7 +131,15 @@ if ! command -v pm2 &> /dev/null; then
     npm install -g pm2
 fi
 
-ok "  Node.js: $(node -v), pnpm: $(pnpm -v), PM2: $(pm2 -v), sqlite3: $(sqlite3 --version | head -1)"
+# bun — для запуска .ts скриптов напрямую (reparse, test-parser)
+# Ставится через npm — это работает даже если GitHub напрямую недоступен
+# (бинарник скачивается через npm registry).
+if ! command -v bun &> /dev/null; then
+    log "  Устанавливаю bun через npm..."
+    npm install -g bun
+fi
+
+ok "  Node.js: $(node -v), pnpm: $(pnpm -v), PM2: $(pm2 -v), bun: $(bun --version 2>/dev/null || echo 'нет'), sqlite3: $(sqlite3 --version | head -1)"
 
 # -------- 2. Установка Caddy --------
 log "Шаг 2/9: установка Caddy..."
