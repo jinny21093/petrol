@@ -39,10 +39,48 @@ pnpm dev
 
 Открыть http://localhost:3000
 
-## Деплой на продакшен
+## Деплой на продакшен (Ubuntu 22.04)
 
-См. [DEPLOY.md](./DEPLOY.md) — пошаговый план установки на Ubuntu 22.04
-(Node.js 20 + PM2 + Caddy + авто-HTTPS через Let's Encrypt).
+### Автоматическая установка (одна команда)
+
+На чистом сервере Ubuntu 22.04:
+
+```bash
+# Клонируем репо во временную папку
+sudo apt-get install -y git
+git clone https://github.com/jinny21093/petrol.git /tmp/petrol
+
+# Запускаем установку (замените домен на свой!)
+sudo bash /tmp/petrol/scripts/install.sh azs.example.ru
+```
+
+Скрипт сам поставит Node.js 20, pnpm, PM2, Caddy, склонит репо в `/var/www/vologda-azs`,
+соберёт приложение, запустит его, настроит HTTPS через Let's Encrypt и cron-автообновление.
+
+После установки откройте `https://azs.example.ru`, зайдите в таб «Настройки» и вставьте JSESSIONID.
+
+Подробности — в [DEPLOY.md](./DEPLOY.md).
+
+### Обновление кода на сервере
+
+Когда в репозитории появились новые коммиты (например, вы попросили ИИ добавить фичу
+и он запушил в main):
+
+```bash
+cd /var/www/vologda-azs
+bash scripts/update.sh
+```
+
+Скрипт сделает `git pull`, при необходимости обновит зависимости и схему БД, пересоберёт
+Next.js и перезапустит приложение через PM2 с проверкой, что оно живо.
+
+### Скрипты в репозитории
+
+| Скрипт | Где запускать | Что делает |
+|---|---|---|
+| `scripts/install.sh` | На сервере (один раз) | Полная установка с нуля: Node + PM2 + Caddy + сборка + HTTPS + cron |
+| `scripts/update.sh` | На сервере (при обновлениях) | `git pull` → `pnpm install` → `prisma db push` → `build` → `pm2 restart` с health-check |
+| `scripts/cron-refresh.sh` | На сервере (через cron) | Лёгкий вызов `/api/refresh` через localhost (быстрее внешнего curl) |
 
 ## Важно про авторизацию
 
