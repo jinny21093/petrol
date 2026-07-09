@@ -146,9 +146,9 @@ ok "  Prisma Client сгенерирован"
 
 # Перепарсить существующие снапшоты, если менялся парсер топлива
 # (быстро: просто перезаписывает parsedFuels для всех записей)
-if [[ -f "scripts/reparse-snapshots.ts" ]]; then
+if [[ -f "scripts/reparse-snapshots.mjs" ]]; then
     log "  Перепарсинг существующих снапшотов (на случай обновления парсера)..."
-    pnpm exec bun run scripts/reparse-snapshots.ts 2>&1 | tail -5 || warn "  Перепарсинг не удался (не критично, продолжаю)"
+    node scripts/reparse-snapshots.mjs 2>&1 | tail -5 || warn "  Перепарсинг не удался (не критично, продолжаю)"
 fi
 
 # -------- 5. Сборка Next.js --------
