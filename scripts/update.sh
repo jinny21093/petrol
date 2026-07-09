@@ -225,6 +225,17 @@ if [[ -f "scripts/reparse-snapshots.ts" ]]; then
     fi
 fi
 
+# Cleanup дубликатов станций (после миграции с geoportal на platforma35)
+# Находит АЗС с одинаковым адресом, оставляет platforma35-версию, переносит снапшоты
+if [[ -f "scripts/cleanup-duplicates.ts" ]]; then
+    log "  Cleanup дубликатов станций (если есть)..."
+    if command -v bun &> /dev/null; then
+        bun run scripts/cleanup-duplicates.ts 2>&1 | tail -10 || warn "  Cleanup не удался (не критично, продолжаю)"
+    elif [[ -f "scripts/cleanup-duplicates.mjs" ]]; then
+        node scripts/cleanup-duplicates.mjs 2>&1 | tail -10 || warn "  Cleanup не удался (не критично, продолжаю)"
+    fi
+fi
+
 # -------- 5. Сборка Next.js --------
 log "Шаг 5/8: сборка Next.js (output: standalone)..."
 

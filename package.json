@@ -12,6 +12,7 @@
     "db:migrate": "prisma migrate dev",
     "db:reset": "prisma migrate reset",
     "reparse": "bun run scripts/reparse-snapshots.ts",
+    "cleanup": "bun run scripts/cleanup-duplicates.ts",
     "test:parser": "bun run scripts/test-parser.ts"
   },
   "dependencies": {
