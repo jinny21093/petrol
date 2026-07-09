@@ -67,3 +67,4 @@ server.log
 .idea/
 .vscode/
 *.swp
+upload/
