@@ -260,7 +260,16 @@ async function processMarker(
   }
 
   // Сохраняем снапшот только если есть данные (не сохраняем пустые каждый опрос)
+  // и только если ещё нет снапшота с таким же sourceUpdatedAt (дедупликация).
+  // Platforma35 обновляет данные раз в 2-3 часа, поэтому при опросе каждые 10 мин
+  // мы будем получать тот же last_update много раз — без дедупликации БД раздуется.
   if (fuels.length > 0 || marker.comment) {
+    if (sourceUpdatedAt) {
+      const existing = await db.fuelSnapshot.findFirst({
+        where: { stationId: station.id, sourceUpdatedAt },
+      })
+      if (existing) return  // уже есть снапшот с этим временем — пропускаем
+    }
     await db.fuelSnapshot.create({
       data: {
         stationId: station.id,
@@ -275,9 +284,17 @@ async function processMarker(
 
 /**
  * Сохранить исторические точки из ответа platforma35 в нашу БД,
- * если их там ещё нет. Platforma35 отдаёт 2-3 точки за день — например:
- *   09.07, 15:30
- *   09.07, 13:00
+ * если их там ещё нет. Platforma35 отдаёт 2-9 точек за последние сутки — например:
+ *   10.07, 11:17   ← последняя (часто совпадает с marker.last_update)
+ *   10.07, 08:20
+ *   09.07, 22:11
+ *   ...
+ *
+ * ВАЖНО: первая точка history_fuel обычно дублирует marker.last_update —
+ * её уже сохранил processMarker. Пропускаем такую точку, чтобы не плодить дубли.
+ *
+ * Дедупликация по sourceUpdatedAt: если в БД уже есть снапшот с тем же
+ * временем — не создаём новый.
  */
 async function importHistoryFromPlatforma35(markers: Platforma35Marker[]): Promise<void> {
   for (const marker of markers) {
@@ -288,9 +305,15 @@ async function importHistoryFromPlatforma35(markers: Platforma35Marker[]): Promi
     })
     if (!station) continue
 
+    // Время последнего обновления из маркера — эту точку уже сохранил processMarker
+    const lastUpdateTime = parsePlatforma35Time(marker.last_update)
+
     for (const hp of marker.history_fuel) {
       const sourceUpdatedAt = parsePlatforma35Time(hp.time)
       if (!sourceUpdatedAt) continue
+
+      // Пропускаем точку, совпадающую с last_update (уже сохранена в processMarker)
+      if (lastUpdateTime && sourceUpdatedAt.getTime() === lastUpdateTime.getTime()) continue
 
       // Проверяем, есть ли уже снапшот с этим временем
       const existing = await db.fuelSnapshot.findFirst({
