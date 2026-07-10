@@ -12,11 +12,6 @@ const nextConfig: NextConfig = {
   images: {
     unoptimized: true,
   },
-  // Отключаем сбор телеметрии Next.js (анонимной статистики использования).
-  // Уменьшает шум в логах и слегка ускоряет build.
-  telemetry: {
-    version: "exact",
-  },
 };
 
 export default nextConfig;
