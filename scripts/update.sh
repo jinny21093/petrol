@@ -253,6 +253,15 @@ if [[ -f "scripts/cleanup-duplicates.ts" ]]; then
     ok "Cleanup завершён"
 fi
 
+# Дедупликация снапшотов (одинаковые stationId + sourceUpdatedAt)
+if [[ -f "scripts/dedup-snapshots.ts" ]]; then
+    log "Дедупликация снапшотов (если есть дубли)..."
+    if command -v bun &> /dev/null; then
+        bun run scripts/dedup-snapshots.ts 2>&1 | tail -5
+    fi
+    ok "Дедупликация завершена"
+fi
+
 # -------- Шаг 5: сборка Next.js --------
 log "Шаг 5/8: сборка Next.js (output: standalone)..."
 
