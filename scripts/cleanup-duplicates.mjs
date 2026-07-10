@@ -1,101 +1,97 @@
 /**
  * Cleanup дубликатов станций после миграции с геопортала на platforma35.
  *
- * Проблема: после переключения источника данных в БД остались старые АЗС
- * с externalId от геопортала (1-11), а новые с platforma35 имеют
- * externalId=1-9. Получаются дубли по адресам.
- *
- * Что делает скрипт:
- *   1. Находит все АЗС с source='platforma35' (новые, правильные)
- *   2. Для каждой такой АЗС ищет старую с тем же адресом (source='geoportal' или null)
- *   3. Переносит все FuelSnapshot со старой станции на новую
- *   4. Удаляет старую станцию
- *
- * Запуск:
+ * Использование:
  *   node scripts/cleanup-duplicates.mjs
+ *
+ * ВНИМАНИЕ: после миграции на Prisma v7 с Direct TCP + better-sqlite3,
+ * bun не поддерживает native модуль better-sqlite3. Этот скрипт работает
+ * через node + better-sqlite3 напрямую (без Prisma).
  */
-import { PrismaClient } from '@prisma/client'
 
-const db = new PrismaClient()
+import Database from 'better-sqlite3'
 
-async function main() {
-  console.log('Cleanup дубликатов станций...\n')
+const dbPath = process.env.DATABASE_URL?.replace('file:', '') || './db/custom.db'
+const db = new Database(dbPath)
 
-  const allStations = await db.station.findMany({
-    orderBy: { createdAt: 'asc' },
-  })
-  console.log(`Всего АЗС в БД: ${allStations.length}`)
+console.log('Cleanup дубликатов станций...\n')
 
-  const normAddr = (s) =>
-    s
-      .toLowerCase()
-      .replace(/\s+/g, ' ')
-      .replace(/ул\./, 'ул.')
-      .replace(/ш\./, 'ш.')
-      .trim()
+const allStations = db
+  .prepare(
+    `SELECT id, externalId, brand, address, source, longitude, latitude
+     FROM Station ORDER BY createdAt ASC`,
+  )
+  .all()
+console.log(`Всего АЗС в БД: ${allStations.length}`)
 
-  const byAddr = new Map()
-  for (const s of allStations) {
-    const key = normAddr(s.address)
-    if (!byAddr.has(key)) byAddr.set(key, [])
-    byAddr.get(key).push(s)
-  }
+const normAddr = (s) =>
+  s
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/ул\./, 'ул.')
+    .replace(/ш\./, 'ш.')
+    .trim()
 
-  let duplicatesFound = 0
-  let snapshotsMoved = 0
-  let stationsDeleted = 0
-
-  for (const [addr, stations] of byAddr.entries()) {
-    if (stations.length < 2) continue
-
-    duplicatesFound++
-    console.log(`\nДубликаты по адресу "${addr}":`)
-    for (const s of stations) {
-      console.log(
-        `  id=${s.id}  externalId=${s.externalId}  source=${s.source || 'null'}  brand=${s.brand}`,
-      )
-    }
-
-    const withCoords = stations.find((s) => s.longitude !== null && s.latitude !== null)
-    const platforma35 = stations.find((s) => s.source === 'platforma35')
-    const keeper = withCoords || platforma35 || stations[0]
-    const losers = stations.filter((s) => s.id !== keeper.id)
-
-    console.log(`  → оставляем: id=${keeper.id} (source=${keeper.source || 'null'})`)
-
-    for (const loser of losers) {
-      const snapCount = await db.fuelSnapshot.count({
-        where: { stationId: loser.id },
-      })
-      if (snapCount > 0) {
-        await db.fuelSnapshot.updateMany({
-          where: { stationId: loser.id },
-          data: { stationId: keeper.id },
-        })
-        console.log(`  → перенесено ${snapCount} снапшотов с id=${loser.id} на id=${keeper.id}`)
-        snapshotsMoved += snapCount
-      }
-      await db.station.delete({ where: { id: loser.id } })
-      console.log(`  → удалена станция id=${loser.id}`)
-      stationsDeleted++
-    }
-  }
-
-  console.log(`\n${'='.repeat(60)}`)
-  console.log(`Готово!`)
-  console.log(`  Адресов с дубликатами: ${duplicatesFound}`)
-  console.log(`  Снапшотов перенесено:  ${snapshotsMoved}`)
-  console.log(`  Станций удалено:       ${stationsDeleted}`)
-
-  const finalCount = await db.station.count()
-  console.log(`  Станций в БД: было ${allStations.length} → стало ${finalCount}`)
+const byAddr = new Map()
+for (const s of allStations) {
+  const key = normAddr(s.address)
+  if (!byAddr.has(key)) byAddr.set(key, [])
+  byAddr.get(key).push(s)
 }
 
-main()
-  .catch((e) => {
-    console.error(e)
-    process.exit(1)
-  })
-  .finally(async () => {
-    await db.$disconnect()
-  })
+let duplicatesFound = 0
+let snapshotsMoved = 0
+let stationsDeleted = 0
+
+const updateSnapshotsStmt = db.prepare(
+  'UPDATE FuelSnapshot SET stationId = ? WHERE stationId = ?',
+)
+const countSnapshotsStmt = db.prepare(
+  'SELECT COUNT(*) as c FROM FuelSnapshot WHERE stationId = ?',
+)
+const deleteStationStmt = db.prepare('DELETE FROM Station WHERE id = ?')
+
+for (const [addr, stations] of byAddr.entries()) {
+  if (stations.length < 2) continue
+
+  duplicatesFound++
+  console.log(`\nДубликаты по адресу "${addr}":`)
+  for (const s of stations) {
+    console.log(
+      `  id=${s.id}  externalId=${s.externalId}  source=${s.source || 'null'}  brand=${s.brand}`,
+    )
+  }
+
+  // Prefer с координатами (это реально новая от platforma35)
+  const withCoords = stations.find(
+    (s) => s.longitude !== null && s.latitude !== null,
+  )
+  const platforma35 = stations.find((s) => s.source === 'platforma35')
+  const keeper = withCoords || platforma35 || stations[0]
+  const losers = stations.filter((s) => s.id !== keeper.id)
+
+  console.log(`  → оставляем: id=${keeper.id} (source=${keeper.source || 'null'})`)
+
+  for (const loser of losers) {
+    const snapCount = countSnapshotsStmt.get(loser.id).c
+    if (snapCount > 0) {
+      updateSnapshotsStmt.run(keeper.id, loser.id)
+      console.log(`  → перенесено ${snapCount} снапшотов с id=${loser.id} на id=${keeper.id}`)
+      snapshotsMoved += snapCount
+    }
+    deleteStationStmt.run(loser.id)
+    console.log(`  → удалена станция id=${loser.id}`)
+    stationsDeleted++
+  }
+}
+
+console.log(`\n${'='.repeat(60)}`)
+console.log(`Готово!`)
+console.log(`  Адресов с дубликатами: ${duplicatesFound}`)
+console.log(`  Снапшотов перенесено:  ${snapshotsMoved}`)
+console.log(`  Станций удалено:       ${stationsDeleted}`)
+
+const finalCount = db.prepare('SELECT COUNT(*) as c FROM Station').get().c
+console.log(`  Станций в БД: было ${allStations.length} → стало ${finalCount}`)
+
+db.close()

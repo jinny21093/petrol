@@ -231,25 +231,18 @@ if [[ $? -ne 0 ]]; then
 fi
 ok "Prisma Client сгенерирован"
 
-# Перепарсить существующие снапшоты
-if [[ -f "scripts/reparse-snapshots.ts" ]]; then
+# Перепарсить существующие снапшоты (через node + better-sqlite3,
+# т.к. bun не поддерживает native модуль better-sqlite3 в Prisma v7)
+if [[ -f "scripts/reparse-snapshots.mjs" ]]; then
     log "Перепарсинг существующих снапшотов..."
-    if command -v bun &> /dev/null; then
-        bun run scripts/reparse-snapshots.ts 2>&1 | tail -5
-    elif [[ -f "scripts/reparse-snapshots.mjs" ]]; then
-        node scripts/reparse-snapshots.mjs 2>&1 | tail -5
-    fi
+    node scripts/reparse-snapshots.mjs 2>&1 | tail -5
     ok "Перепарсинг завершён"
 fi
 
 # Cleanup дубликатов станций
-if [[ -f "scripts/cleanup-duplicates.ts" ]]; then
+if [[ -f "scripts/cleanup-duplicates.mjs" ]]; then
     log "Cleanup дубликатов станций (если есть)..."
-    if command -v bun &> /dev/null; then
-        bun run scripts/cleanup-duplicates.ts 2>&1 | tail -10
-    elif [[ -f "scripts/cleanup-duplicates.mjs" ]]; then
-        node scripts/cleanup-duplicates.mjs 2>&1 | tail -10
-    fi
+    node scripts/cleanup-duplicates.mjs 2>&1 | tail -10
     ok "Cleanup завершён"
 fi
 

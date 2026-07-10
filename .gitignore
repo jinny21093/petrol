@@ -47,6 +47,9 @@ db/*.db-journal
 db/*.db-shm
 db/*.db-wal
 
+# prisma generated client (генерируется при prisma generate в v7)
+prisma/generated/
+
 # logs
 *.log
 dev.log
