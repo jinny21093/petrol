@@ -1,32 +1,42 @@
 /**
  * Перепарсить все существующие FuelSnapshot.parsedFuels обновлённым парсером.
  *
- * Использование:
- *   node scripts/reparse-snapshots.mjs
+ * Запуск:
+ *   bun run scripts/reparse-snapshots.ts
+ *   # или через pnpm:
+ *   pnpm reparse
  *
- * ВНИМАНИЕ: после миграции на Prisma v7 с Direct TCP + better-sqlite3,
- * bun не поддерживает native модуль better-sqlite3. Этот скрипт работает
- * через node + better-sqlite3 напрямую (без Prisma), чтобы можно было
- * запускать его где угодно — через node или bun.
+ * Использует bun:sqlite (встроенный SQLite в bun) — не требует native
+ * модуля better-sqlite3. Это позволяет запускать скрипт через bun напрямую.
+ *
+ * Когда запускать:
+ *   — После обновления парсера в коде, чтобы применить его к уже накопленным
+ *     историческим данным. Иначе старые снапшоты останутся с некорректным
+ *     parsedFuels.
  */
 
-import Database from 'better-sqlite3'
+import { Database } from 'bun:sqlite'
 
 const dbPath = process.env.DATABASE_URL?.replace('file:', '') || './db/custom.db'
 const db = new Database(dbPath)
 
 /**
- * Парсит текст деталей топлива в структурированный массив.
- * (Дублировано из src/lib/geoportal.ts — см. комментарий в скрипте)
+ * Парсит текст деталей топлива (поле 6920) в структурированный массив.
+ * (Дублировано из src/lib/geoportal.ts — для автономности скрипта)
  */
-function parseFuelDetails(raw) {
+function parseFuelDetails(raw: string): {
+  comment: string | null
+  fuels: { fuel: string; liters: number | null; cars: number | null }[]
+} {
   if (!raw) return { comment: null, fuels: [] }
   const lines = raw.split(/\n+/).map((l) => l.trim()).filter(Boolean)
-  const fuels = []
-  const commentLines = []
+  const fuels: { fuel: string; liters: number | null; cars: number | null }[] = []
+  const commentLines: string[] = []
+
   const fuelRe =
     /^(\d{2,3}|[А-Яа-яЁё]{2,5}(?:-[А-Яа-яЁё])?)\s*[-–—:]\s*(?:(\d+(?:[.,]\d+)?)\s*л)?\s*(?:\/?\s*(\d+(?:[.,]\d+)?)\s*машин)?/i
   const headerRe = /^остаток топлива на\s+\d{1,2}:\d{2}\s*:?\s*$/i
+
   for (const line of lines) {
     if (headerRe.test(line)) continue
     const m = line.match(fuelRe)
@@ -47,10 +57,14 @@ function parseFuelDetails(raw) {
   }
 }
 
-const total = db.prepare('SELECT COUNT(*) as c FROM FuelSnapshot').get().c
+const total = (db.prepare('SELECT COUNT(*) as c FROM FuelSnapshot').get() as { c: number }).c
 console.log(`Перепарсинг ${total} снапшотов...`)
 
-const rows = db.prepare('SELECT id, rawDetails, parsedFuels FROM FuelSnapshot ORDER BY id ASC').all()
+const rows = db.prepare('SELECT id, rawDetails, parsedFuels FROM FuelSnapshot ORDER BY id ASC').all() as {
+  id: string
+  rawDetails: string
+  parsedFuels: string
+}[]
 
 let updated = 0
 let unchanged = 0

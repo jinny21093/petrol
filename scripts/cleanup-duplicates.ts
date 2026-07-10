@@ -1,15 +1,16 @@
 /**
  * Cleanup дубликатов станций после миграции с геопортала на platforma35.
  *
- * Использование:
- *   node scripts/cleanup-duplicates.mjs
+ * Запуск:
+ *   bun run scripts/cleanup-duplicates.ts
+ *   # или через pnpm:
+ *   pnpm cleanup
  *
- * ВНИМАНИЕ: после миграции на Prisma v7 с Direct TCP + better-sqlite3,
- * bun не поддерживает native модуль better-sqlite3. Этот скрипт работает
- * через node + better-sqlite3 напрямую (без Prisma).
+ * Использует bun:sqlite (встроенный SQLite в bun) — не требует native
+ * модуля better-sqlite3.
  */
 
-import Database from 'better-sqlite3'
+import { Database } from 'bun:sqlite'
 
 const dbPath = process.env.DATABASE_URL?.replace('file:', '') || './db/custom.db'
 const db = new Database(dbPath)
@@ -21,10 +22,18 @@ const allStations = db
     `SELECT id, externalId, brand, address, source, longitude, latitude
      FROM Station ORDER BY createdAt ASC`,
   )
-  .all()
+  .all() as {
+  id: string
+  externalId: number
+  brand: string
+  address: string
+  source: string | null
+  longitude: number | null
+  latitude: number | null
+}[]
 console.log(`Всего АЗС в БД: ${allStations.length}`)
 
-const normAddr = (s) =>
+const normAddr = (s: string): string =>
   s
     .toLowerCase()
     .replace(/\s+/g, ' ')
@@ -32,11 +41,11 @@ const normAddr = (s) =>
     .replace(/ш\./, 'ш.')
     .trim()
 
-const byAddr = new Map()
+const byAddr = new Map<string, typeof allStations>()
 for (const s of allStations) {
   const key = normAddr(s.address)
   if (!byAddr.has(key)) byAddr.set(key, [])
-  byAddr.get(key).push(s)
+  byAddr.get(key)!.push(s)
 }
 
 let duplicatesFound = 0
@@ -63,9 +72,7 @@ for (const [addr, stations] of byAddr.entries()) {
   }
 
   // Prefer с координатами (это реально новая от platforma35)
-  const withCoords = stations.find(
-    (s) => s.longitude !== null && s.latitude !== null,
-  )
+  const withCoords = stations.find((s) => s.longitude !== null && s.latitude !== null)
   const platforma35 = stations.find((s) => s.source === 'platforma35')
   const keeper = withCoords || platforma35 || stations[0]
   const losers = stations.filter((s) => s.id !== keeper.id)
@@ -73,7 +80,7 @@ for (const [addr, stations] of byAddr.entries()) {
   console.log(`  → оставляем: id=${keeper.id} (source=${keeper.source || 'null'})`)
 
   for (const loser of losers) {
-    const snapCount = countSnapshotsStmt.get(loser.id).c
+    const snapCount = (countSnapshotsStmt.get(loser.id) as { c: number }).c
     if (snapCount > 0) {
       updateSnapshotsStmt.run(keeper.id, loser.id)
       console.log(`  → перенесено ${snapCount} снапшотов с id=${loser.id} на id=${keeper.id}`)
@@ -91,7 +98,7 @@ console.log(`  Адресов с дубликатами: ${duplicatesFound}`)
 console.log(`  Снапшотов перенесено:  ${snapshotsMoved}`)
 console.log(`  Станций удалено:       ${stationsDeleted}`)
 
-const finalCount = db.prepare('SELECT COUNT(*) as c FROM Station').get().c
+const finalCount = (db.prepare('SELECT COUNT(*) as c FROM Station').get() as { c: number }).c
 console.log(`  Станций в БД: было ${allStations.length} → стало ${finalCount}`)
 
 db.close()
