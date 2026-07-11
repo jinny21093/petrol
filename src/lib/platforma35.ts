@@ -59,12 +59,13 @@ export interface Platforma35Marker {
   title: string // бренд
   address: string
   comment: string
-  comment_date: string
+  comment_date: string // "11.07, 10:58" — когда был добавлен комментарий
   last_update: string // "09.07, 15:36" или "" если нет данных
   remaining_fuel: Platforma35Fuel[]
   availability_fuel: boolean
+  fuel_delivery: boolean // true если ожидается/идёт подвоз топлива
   history_fuel: Platforma35HistoryPoint[]
-  info: string // готовый HTML
+  info: string // готовый HTML вида "95 - 13300 л. / 665 машин<br>..."
 }
 
 export interface Platforma35Response {
@@ -126,6 +127,61 @@ export function parsePlatforma35Time(time: string): Date | null {
     date.setFullYear(date.getFullYear() - 1)
   }
   return date
+}
+
+/**
+ * Распарсить количество машин по типу топлива из HTML-поля `info`.
+ *
+ * Поле info имеет вид:
+ *   "100 - нет<br>95 - 17000 л. / 567 машин<br>92 - 10000 л. / 333 машин"
+ *   "95 - 13300 л. / 665 машин"
+ *   "100 - нет<br>92 - нет<br>95 - нет"
+ *
+ * Возвращает Map: тип топлива → количество машин (или null, если не указано).
+ * Например: { "95" => 567, "92" => 333, "100" => null }
+ *
+ * Если топлива нет ("95 - нет") — машины тоже null.
+ */
+export function parseCarsFromInfo(
+  info: string,
+  fuelTypes: string[],
+): Record<string, number | null> {
+  const result: Record<string, number | null> = {}
+  if (!info) {
+    for (const t of fuelTypes) result[t] = null
+    return result
+  }
+
+  // Разбиваем по <br> на строки
+  const lines = info.split(/<br\s*\/?>/i)
+
+  for (const ft of fuelTypes) {
+    // Ищем строку вида "92 - 10000 л. / 333 машин" или "92 - нет"
+    // Возможные форматы:
+    //   "92 - 10000 л. / 333 машин"
+    //   "92 - 10000 л. / 333 машин" (с точкой после "л")
+    //   "92 - нет"
+    //   "92 - 5000 л"
+    const re = new RegExp(`${ft}\\s*-\\s*(\\d+[\\d.,]*\\s*л\\.?\\s*(?:/\\s*(\\d+)\\s*машин)?|нет)`, 'i')
+    let cars: number | null = null
+    for (const line of lines) {
+      const m = line.match(re)
+      if (m) {
+        if (m[1].toLowerCase() === 'нет') {
+          cars = null
+        } else if (m[2]) {
+          cars = parseInt(m[2], 10)
+        } else {
+          // есть литры, но нет машин
+          cars = null
+        }
+        break
+      }
+    }
+    result[ft] = cars
+  }
+
+  return result
 }
 
 export const PLATFORMA35_CONSTANTS = {

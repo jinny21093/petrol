@@ -176,20 +176,51 @@ function TrendIcon({ trend }: { trend: { direction: string; delta: number } | nu
   )
 }
 
+/**
+ * Определить состояние АЗС для отображения.
+ * 3 состояния:
+ *  - 'active'   — АЗС работает и сообщает об остатках (availability_fuel=true)
+ *  - 'empty'    — АЗС работает, но топлива нет (все литры = 0) или данные устарели
+ *  - 'nodata'   — АЗС не сообщает данные (availability_fuel=false, remaining_fuel=[])
+ */
+function getStationState(s: Station): 'active' | 'empty' | 'nodata' {
+  if (s.availabilityFuel) return 'active'
+  // availability_fuel=false, но есть remaining_fuel (возможно все нули) — топлива нет
+  const fuels = s.latestSnapshot?.parsedFuels?.fuels || []
+  if (fuels.length > 0) return 'empty'
+  return 'nodata'
+}
+
 function StationCard({ s, onShowHistory }: { s: Station; onShowHistory?: (s: Station) => void }) {
-  const hasFuel = s.availabilityFuel
+  const state = getStationState(s)
   const fuels = s.latestSnapshot?.parsedFuels?.fuels || []
   const comment = s.latestSnapshot?.parsedFuels?.comment
+  const commentDate = s.latestSnapshot?.parsedFuels?.commentDate
+  const fuelDelivery = s.fuelDelivery || s.latestSnapshot?.parsedFuels?.fuelDelivery
   const prevFuels = s.previousSnapshot?.parsedFuels?.fuels
 
-  // Карточка с цветной рамкой: зелёная — есть топливо, серая — нет
-  const cardClass = hasFuel
-    ? 'border-emerald-500/60 bg-emerald-50/40 dark:bg-emerald-950/10'
-    : 'border-muted bg-muted/20 dark:bg-muted/10 opacity-75'
+  // Цветовая индикация по 3 состояниям
+  const cardClass = {
+    active: 'border-emerald-500/60 bg-emerald-50/40 dark:bg-emerald-950/10',
+    empty: 'border-amber-500/50 bg-amber-50/30 dark:bg-amber-950/10',
+    nodata: 'border-muted bg-muted/20 dark:bg-muted/10 opacity-75',
+  }[state]
+
+  const dotClass = {
+    active: 'bg-emerald-500',
+    empty: 'bg-amber-500',
+    nodata: 'bg-muted-foreground/40',
+  }[state]
+
+  const stateLabel = {
+    active: 'Работает',
+    empty: 'Нет топлива',
+    nodata: 'Нет данных',
+  }[state]
 
   return (
     <Card className={`overflow-hidden transition-all hover:shadow-md ${cardClass}`}>
-      {/* Компактная шапка: логотип + название + статус + время */}
+      {/* Шапка: логотип + название + статус + время */}
       <div className="p-3 pb-2 flex items-start gap-2">
         {s.logoUrl ? (
           <img
@@ -215,14 +246,30 @@ function StationCard({ s, onShowHistory }: { s: Station; onShowHistory?: (s: Sta
           </p>
         </div>
         <div className="shrink-0 text-right">
-          <div className={`w-2 h-2 rounded-full mb-1 ml-auto ${hasFuel ? 'bg-emerald-500' : 'bg-muted-foreground/40'}`} />
+          <div className={`w-2 h-2 rounded-full mb-1 ml-auto ${dotClass}`} title={stateLabel} />
           <p className="text-[10px] text-muted-foreground tabular-nums">
             {s.latestSnapshot ? fmtRelative(s.latestSnapshot.sourceUpdatedAt || s.latestSnapshot.fetchedAt) : '—'}
           </p>
         </div>
       </div>
 
-      {/* Топливо: компактные чипы с трендами */}
+      {/* Значок подвоза — заметный, если fuel_delivery=true */}
+      {fuelDelivery ? (
+        <div className="mx-3 mb-2 px-2 py-1 rounded-md bg-blue-100 dark:bg-blue-950/40 border border-blue-300 dark:border-blue-800 flex items-center gap-1.5">
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-blue-700 dark:text-blue-300 shrink-0">
+            <path d="M5 18H3c-.6 0-1-.4-1-1V7c0-.6.4-1 1-1h10c.6 0 1 .4 1 1v11"/>
+            <path d="M14 9h4l4 4v4c0 .6-.4 1-1 1h-2"/>
+            <circle cx="7" cy="18" r="2"/>
+            <path d="M15 18H9"/>
+            <circle cx="17" cy="18" r="2"/>
+          </svg>
+          <span className="text-[11px] font-medium text-blue-700 dark:text-blue-300">
+            Ожидается подвоз
+          </span>
+        </div>
+      ) : null}
+
+      {/* Топливо: компактные чипы с трендами + количеством машин */}
       <div className="px-3 pb-2">
         {fuels.length > 0 ? (
           <div className="grid grid-cols-3 gap-1.5">
@@ -245,9 +292,15 @@ function StationCard({ s, onShowHistory }: { s: Station; onShowHistory?: (s: Sta
                   <p className={`text-sm font-semibold tabular-nums leading-tight mt-0.5 ${isOut ? 'text-red-600 dark:text-red-400' : ''}`}>
                     {f.liters != null ? f.liters.toLocaleString('ru-RU') : '—'}
                   </p>
-                  <div className="h-3 flex items-center justify-center">
-                    <TrendIcon trend={trend} />
-                  </div>
+                  {f.cars != null ? (
+                    <p className="text-[9px] text-muted-foreground tabular-nums leading-tight mt-0.5">
+                      {f.cars} маш.
+                    </p>
+                  ) : (
+                    <div className="h-3 flex items-center justify-center">
+                      <TrendIcon trend={trend} />
+                    </div>
+                  )}
                 </div>
               )
             })}
@@ -258,10 +311,25 @@ function StationCard({ s, onShowHistory }: { s: Station; onShowHistory?: (s: Sta
           </p>
         )}
 
+        {/* Комментарий — заметный, с временем */}
         {comment ? (
-          <p className="text-[11px] text-muted-foreground mt-2 p-1.5 rounded bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900">
-            {comment}
-          </p>
+          <div className="mt-2 p-2 rounded bg-amber-100 dark:bg-amber-950/40 border border-amber-300 dark:border-amber-800">
+            <div className="flex items-start gap-1.5">
+              <svg xmlns="http://www.w3.org/2000/svg" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" className="text-amber-700 dark:text-amber-300 shrink-0 mt-0.5">
+                <path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/>
+              </svg>
+              <div className="flex-1 min-w-0">
+                <p className="text-[11px] font-medium text-amber-900 dark:text-amber-100 leading-snug">
+                  {comment}
+                </p>
+                {commentDate ? (
+                  <p className="text-[9px] text-amber-700 dark:text-amber-400 mt-0.5 tabular-nums">
+                    {fmtRelative(commentDate)}
+                  </p>
+                ) : null}
+              </div>
+            </div>
+          </div>
         ) : null}
       </div>
 

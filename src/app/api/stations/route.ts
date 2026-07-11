@@ -35,9 +35,12 @@ export async function GET(req: NextRequest) {
   })
 
   // достаём последние 2 снапшота для каждой станции (для трендов)
+  // Сортируем по sourceUpdatedAt (время источника) — это настоящая хронология.
+  // fetchedAt (когда мы сохранили) не подходит, потому что importHistoryFromPlatforma35
+  // создаёт много старых точек одновременно с одинаковым fetchedAt.
   const snapshots = await db.fuelSnapshot.findMany({
     where: { stationId: { in: stations.map((s) => s.id) } },
-    orderBy: { fetchedAt: 'desc' },
+    orderBy: [{ sourceUpdatedAt: 'desc' }, { fetchedAt: 'desc' }],
   })
   const latestByStation = new Map<string, (typeof snapshots)[number]>()
   const previousByStation = new Map<string, (typeof snapshots)[number]>()
@@ -65,6 +68,7 @@ export async function GET(req: NextRequest) {
       latitude: s.latitude,
       logoUrl: s.logoUrl,
       availabilityFuel: s.availabilityFuel,
+      fuelDelivery: s.fuelDelivery,
       updatedAt: s.updatedAt,
       latestSnapshot: latest
         ? {

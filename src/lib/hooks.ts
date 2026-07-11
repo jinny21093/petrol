@@ -11,7 +11,12 @@ export interface StationFuel {
 export interface StationSnapshot {
   id: string
   rawDetails: string
-  parsedFuels: { comment: string | null; fuels: StationFuel[] }
+  parsedFuels: {
+    comment: string | null
+    commentDate: string | null
+    fuelDelivery: boolean
+    fuels: StationFuel[]
+  }
   sourceCreatedAt: string | null
   sourceUpdatedAt: string | null
   fetchedAt: string
@@ -30,6 +35,7 @@ export interface Station {
   latitude: number | null
   logoUrl: string | null
   availabilityFuel: boolean
+  fuelDelivery: boolean
   updatedAt: string
   latestSnapshot: StationSnapshot | null
   previousSnapshot: StationSnapshot | null

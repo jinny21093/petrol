@@ -25,6 +25,7 @@ import {
   fetchAllStations as fetchAllPlatforma35,
   absoluteLogoUrl,
   parsePlatforma35Time,
+  parseCarsFromInfo,
   type Platforma35Marker,
 } from '@/lib/platforma35'
 
@@ -204,6 +205,13 @@ export async function refreshAllStations(): Promise<RefreshResult> {
 /**
  * Обновить или создать станцию по данным маркера platforma35,
  * сохранить свежий снапшот остатков.
+ *
+ * Логика сохранения снапшота:
+ *   1. Если sourceUpdatedAt (last_update) изменился → создаём новый снапшот
+ *   2. Если sourceUpdatedAt тот же, но comment или comment_date изменились →
+ *      обновляем parsedFuels в существующем снапшоте (комментарий — это
+ *      оперативная информация, не нужно терять)
+ *   3. Если ничего не изменилось → пропускаем (дедупликация)
  */
 async function processMarker(
   marker: Platforma35Marker,
@@ -211,14 +219,22 @@ async function processMarker(
 ): Promise<void> {
   const status = marker.availability_fuel ? 'Да' : 'Нет'
 
+  // Парсим количество машин из HTML-поля info
+  const fuelTypes = marker.remaining_fuel.map((f) => f.type)
+  const carsByType = parseCarsFromInfo(marker.info || '', fuelTypes)
+
   const fuels = marker.remaining_fuel.map((f) => ({
     fuel: f.type,
     liters: f.remains,
-    cars: null,
+    cars: carsByType[f.type] ?? null,
   }))
+
+  const commentDate = parsePlatforma35Time(marker.comment_date)
 
   const parsed = {
     comment: marker.comment || null,
+    commentDate: commentDate?.toISOString() || null,
+    fuelDelivery: marker.fuel_delivery || false,
     fuels,
   }
 
@@ -238,6 +254,7 @@ async function processMarker(
     latitude: marker.coordinates?.[1] ?? null,
     logoUrl: absoluteLogoUrl(marker.logo),
     availabilityFuel: marker.availability_fuel,
+    fuelDelivery: marker.fuel_delivery || false,
   }
 
   let station: { id: string }
@@ -250,7 +267,8 @@ async function processMarker(
       existing.brand !== data.brand ||
       existing.address !== data.address ||
       existing.status !== data.status ||
-      existing.availabilityFuel !== data.availabilityFuel
+      existing.availabilityFuel !== data.availabilityFuel ||
+      existing.fuelDelivery !== data.fuelDelivery
     onResult(false, isUpdated)
   } else {
     station = await db.station.create({
@@ -260,16 +278,10 @@ async function processMarker(
   }
 
   // Сохраняем снапшот только если есть данные (не сохраняем пустые каждый опрос)
-  // и только если ещё нет снапшота с таким же sourceUpdatedAt (дедупликация).
-  // Platforma35 обновляет данные раз в 2-3 часа, поэтому при опросе каждые 10 мин
-  // мы будем получать тот же last_update много раз — без дедупликации БД раздуется.
-  if (fuels.length > 0 || marker.comment) {
-    if (sourceUpdatedAt) {
-      const existing = await db.fuelSnapshot.findFirst({
-        where: { stationId: station.id, sourceUpdatedAt },
-      })
-      if (existing) return  // уже есть снапшот с этим временем — пропускаем
-    }
+  if (fuels.length === 0 && !marker.comment) return
+
+  if (!sourceUpdatedAt) {
+    // Нет sourceUpdatedAt — нечего дедуплицировать, просто создаём
     await db.fuelSnapshot.create({
       data: {
         stationId: station.id,
@@ -279,7 +291,56 @@ async function processMarker(
         sourceUpdatedAt,
       },
     })
+    return
   }
+
+  // Ищем существующий снапшот с таким же sourceUpdatedAt
+  const existingSnap = await db.fuelSnapshot.findFirst({
+    where: { stationId: station.id, sourceUpdatedAt },
+  })
+
+  if (!existingSnap) {
+    // Новый снапшот — создаём
+    await db.fuelSnapshot.create({
+      data: {
+        stationId: station.id,
+        rawDetails: marker.info || '',
+        parsedFuels: JSON.stringify(parsed),
+        sourceCreatedAt: sourceUpdatedAt,
+        sourceUpdatedAt,
+      },
+    })
+    return
+  }
+
+  // Снапшот уже есть. Проверяем — не изменился ли комментарий?
+  // (бывает, что platforma35 обновляет comment, не трогая last_update)
+  let existingParsed: { comment?: string | null; commentDate?: string | null; fuelDelivery?: boolean }
+  try {
+    existingParsed = JSON.parse(existingSnap.parsedFuels)
+  } catch {
+    existingParsed = {}
+  }
+
+  const oldComment = existingParsed.comment ?? null
+  const newComment = parsed.comment
+  const oldCommentDate = existingParsed.commentDate ?? null
+  const newCommentDate = parsed.commentDate
+  const oldFuelDelivery = existingParsed.fuelDelivery ?? false
+  const newFuelDelivery = parsed.fuelDelivery
+
+  if (
+    oldComment !== newComment ||
+    oldCommentDate !== newCommentDate ||
+    oldFuelDelivery !== newFuelDelivery
+  ) {
+    // Комментарий или флаг подвоза изменились — обновляем существующий снапшот
+    await db.fuelSnapshot.update({
+      where: { id: existingSnap.id },
+      data: { parsedFuels: JSON.stringify(parsed) },
+    })
+  }
+  // Если ничего не изменилось — пропускаем (дедупликация)
 }
 
 /**
