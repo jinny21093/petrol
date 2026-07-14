@@ -54,6 +54,7 @@ import {
   useRefresh,
   useStationHistory,
   useAnalytics,
+  useVersions,
   type Station,
 } from '@/lib/hooks'
 import { Toaster } from '@/components/ui/sonner'
@@ -925,6 +926,7 @@ function SettingsPanel() {
 export default function HomePage() {
   const { stats, reload: reloadStats } = useStats()
   const { refresh } = useRefresh()
+  const { versions, appVersion, loading: versionsLoading, expanded, setExpanded } = useVersions()
 
   // авто-обновление статы каждые 60 сек
   useMemo(() => {
@@ -1066,19 +1068,71 @@ export default function HomePage() {
       </main>
 
       <footer className="border-t mt-auto bg-card">
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 py-3 text-xs text-muted-foreground flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
-          <p>
-            Дашборд мониторинга АЗС · данные{' '}
-            <a
-              href="https://platforma35.ru/communal_economy/azs/"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="underline"
+        <div className="max-w-7xl mx-auto px-3 sm:px-4 py-2 text-xs text-muted-foreground">
+          <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-1">
+            <p>
+              Дашборд мониторинга АЗС · данные{' '}
+              <a
+                href="https://platforma35.ru/communal_economy/azs/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className="underline"
+              >
+                platforma35.ru
+              </a>
+            </p>
+            <button
+              onClick={() => setExpanded(!expanded)}
+              className="flex items-center gap-1 hover:text-foreground transition-colors"
             >
-              platforma35.ru
-            </a>
-          </p>
-          <p>Next.js + Prisma + SQLite · v1.0</p>
+              <span>v{appVersion}</span>
+              {versions.filter((v) => v.status === 'major').length > 0 ? (
+                <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-red-100 dark:bg-red-950/40 text-red-700 dark:text-red-300 text-[10px] font-medium">
+                  {versions.filter((v) => v.status === 'major').length} устар.
+                </span>
+              ) : null}
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="10"
+                height="10"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2.5"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                className={`transition-transform ${expanded ? 'rotate-180' : ''}`}
+              >
+                <path d="m6 9 6 6 6-6"></path>
+              </svg>
+            </button>
+          </div>
+
+          {expanded ? (
+            <div className="mt-2 pb-1 border-t pt-2">
+              {versionsLoading && versions.length === 0 ? (
+                <p className="text-[10px] text-muted-foreground/60">Загрузка версий…</p>
+              ) : (
+                <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-5 gap-x-3 gap-y-1">
+                  {versions.map((v) => (
+                    <div key={v.name} className="flex items-center gap-1 text-[10px]">
+                      <span className="text-muted-foreground/70 truncate">{v.name}</span>
+                      <span className="tabular-nums font-mono">{v.current}</span>
+                      {v.latest && v.status === 'ok' ? (
+                        <span className="text-emerald-600 dark:text-emerald-400" title={`Latest: ${v.latest}`}>✓</span>
+                      ) : v.latest && v.status === 'minor' ? (
+                        <span className="text-amber-600 dark:text-amber-400" title={`Latest: ${v.latest}`}>↑{v.latest}</span>
+                      ) : v.latest && v.status === 'major' ? (
+                        <span className="text-red-600 dark:text-red-400 font-medium" title={`Latest: ${v.latest}`}>→{v.latest}</span>
+                      ) : (
+                        <span className="text-muted-foreground/40">?</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          ) : null}
         </div>
       </footer>
     </div>

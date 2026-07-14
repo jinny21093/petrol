@@ -224,3 +224,39 @@ export function useAnalytics(hours = 24) {
 
   return { analytics, loading, error, reload }
 }
+
+export interface VersionInfo {
+  name: string
+  current: string
+  latest: string | null
+  status: 'ok' | 'minor' | 'major' | 'unknown'
+}
+
+export function useVersions() {
+  const [versions, setVersions] = useState<VersionInfo[]>([])
+  const [appVersion, setAppVersion] = useState('?')
+  const [loading, setLoading] = useState(false)
+  const [expanded, setExpanded] = useState(false)
+
+  const reload = useCallback(async () => {
+    setLoading(true)
+    try {
+      const r = await jfetch<{ versions: VersionInfo[]; appVersion: string }>('/api/versions')
+      setVersions(r.versions)
+      setAppVersion(r.appVersion)
+    } catch {
+      // молча игнорируем — версии не критичны
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    // Загружаем только при первом раскрытии
+    if (expanded && versions.length === 0) {
+      reload()
+    }
+  }, [expanded, versions.length, reload])
+
+  return { versions, appVersion, loading, expanded, setExpanded, reload }
+}
