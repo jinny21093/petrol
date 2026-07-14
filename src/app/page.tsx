@@ -50,14 +50,11 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { toast } from 'sonner'
 import {
   useStations,
-  useCoverage,
   useStats,
   useRefresh,
-  useSettings,
   useStationHistory,
   useAnalytics,
   type Station,
-  type CoveragePoint,
 } from '@/lib/hooks'
 import { Toaster } from '@/components/ui/sonner'
 
@@ -831,186 +828,6 @@ function StationsPanel() {
   )
 }
 
-function CoveragePanel() {
-  const { points, loading, error, create, update, remove } = useCoverage()
-  const [open, setOpen] = useState(false)
-  const [form, setForm] = useState({ name: '', mapX: '', mapY: '', scale: '156093.8619923378' })
-
-  const handleCreate = async () => {
-    const mapX = parseFloat(form.mapX)
-    const mapY = parseFloat(form.mapY)
-    const scale = parseFloat(form.scale) || 156093.8619923378
-    if (!form.name.trim() || Number.isNaN(mapX) || Number.isNaN(mapY)) {
-      toast.error('Заполните название и корректные координаты mapX/mapY')
-      return
-    }
-    try {
-      await create({ name: form.name.trim(), mapX, mapY, scale })
-      toast.success(`Точка «${form.name}» добавлена`)
-      setForm({ name: '', mapX: '', mapY: '', scale: '156093.8619923378' })
-      setOpen(false)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    }
-  }
-
-  return (
-    <div className="space-y-4">
-      <Card>
-        <CardContent className="p-4 flex items-start justify-between gap-3">
-          <div>
-            <p className="font-medium">Coverage-точки</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              Координаты центров областей опроса геопортала. Несколько точек покрывают весь город.
-              Добавляйте новые точки для масштабирования на новые районы или область.
-            </p>
-          </div>
-          <Dialog open={open} onOpenChange={setOpen}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="w-4 h-4 mr-2" />
-                Добавить
-              </Button>
-            </DialogTrigger>
-            <DialogContent>
-              <DialogHeader>
-                <DialogTitle>Новая coverage-точка</DialogTitle>
-                <DialogDescription>
-                  Координаты в Web Mercator (EPSG:3857) в метрах. Можно взять из исходного скрипта или
-                  получить из широты/доли через стандартные формулы.
-                </DialogDescription>
-              </DialogHeader>
-              <div className="grid gap-3 py-2">
-                <div className="grid gap-1.5">
-                  <Label htmlFor="cp-name">Название</Label>
-                  <Input
-                    id="cp-name"
-                    value={form.name}
-                    onChange={(e) => setForm({ ...form, name: e.target.value })}
-                    placeholder="Например: Заречье, Октябрьский"
-                  />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="cp-x">mapX (метры)</Label>
-                    <Input
-                      id="cp-x"
-                      value={form.mapX}
-                      onChange={(e) => setForm({ ...form, mapX: e.target.value })}
-                      placeholder="8227460.13"
-                    />
-                  </div>
-                  <div className="grid gap-1.5">
-                    <Label htmlFor="cp-y">mapY (метры)</Label>
-                    <Input
-                      id="cp-y"
-                      value={form.mapY}
-                      onChange={(e) => setForm({ ...form, mapY: e.target.value })}
-                      placeholder="4431792.66"
-                    />
-                  </div>
-                </div>
-                <div className="grid gap-1.5">
-                  <Label htmlFor="cp-scale">scale</Label>
-                  <Input
-                    id="cp-scale"
-                    value={form.scale}
-                    onChange={(e) => setForm({ ...form, scale: e.target.value })}
-                  />
-                </div>
-              </div>
-              <DialogFooter>
-                <Button variant="outline" onClick={() => setOpen(false)}>
-                  Отмена
-                </Button>
-                <Button onClick={handleCreate}>Создать</Button>
-              </DialogFooter>
-            </DialogContent>
-          </Dialog>
-        </CardContent>
-      </Card>
-
-      {error ? (
-        <Card>
-          <CardContent className="p-4 text-sm text-red-600">{error}</CardContent>
-        </Card>
-      ) : null}
-
-      {loading ? (
-        <Card>
-          <CardContent className="p-6">
-            <div className="h-20 bg-muted rounded animate-pulse" />
-          </CardContent>
-        </Card>
-      ) : (
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-base">Точки покрытия ({points.length})</CardTitle>
-            <CardDescription>
-              Активных: {points.filter((p) => p.enabled).length}. Каждая точка — отдельный запрос к геопорталу.
-            </CardDescription>
-          </CardHeader>
-          <CardContent className="pt-0">
-            <div className="space-y-2">
-              {points.map((p) => (
-                <CoverageRow
-                  key={p.id}
-                  p={p}
-                  onToggle={(enabled) => update(p.id, { enabled })}
-                  onDelete={() => {
-                    if (confirm(`Удалить точку «${p.name}»?`)) {
-                      remove(p.id)
-                        .then(() => toast.success('Удалено'))
-                        .catch((e) => toast.error(e instanceof Error ? e.message : String(e)))
-                    }
-                  }}
-                />
-              ))}
-              {points.length === 0 ? (
-                <p className="text-sm text-muted-foreground italic py-4 text-center">
-                  Точек нет. Добавьте первую.
-                </p>
-              ) : null}
-            </div>
-          </CardContent>
-        </Card>
-      )}
-    </div>
-  )
-}
-
-function CoverageRow({
-  p,
-  onToggle,
-  onDelete,
-}: {
-  p: CoveragePoint
-  onToggle: (enabled: boolean) => void
-  onDelete: () => void
-}) {
-  return (
-    <div className="flex items-center justify-between gap-3 p-3 rounded-md border bg-card hover:bg-accent/50 transition-colors">
-      <div className="min-w-0 flex-1">
-        <p className="font-medium truncate">{p.name}</p>
-        <p className="text-xs text-muted-foreground font-mono tabular-nums truncate">
-          X: {p.mapX.toFixed(2)} · Y: {p.mapY.toFixed(2)} · scale: {p.scale.toFixed(0)}
-        </p>
-      </div>
-      <div className="flex items-center gap-3 shrink-0">
-        <div className="flex items-center gap-1.5">
-          <Switch checked={p.enabled} onCheckedChange={onToggle} />
-          <span className="text-xs text-muted-foreground hidden sm:inline">
-            {p.enabled ? 'вкл' : 'выкл'}
-          </span>
-        </div>
-        <Button variant="ghost" size="sm" onClick={onDelete} className="text-red-600 hover:text-red-700">
-          Удалить
-        </Button>
-      </div>
-    </div>
-  )
-}
-
 function SettingsPanel() {
   return (
     <div className="space-y-4">
@@ -1156,7 +973,7 @@ export default function HomePage() {
       </header>
 
       <main className="flex-1 max-w-7xl mx-auto w-full px-3 sm:px-4 py-3 sm:py-4 space-y-3">
-        {stats && stats.cookieStatus === 'alive' ? (
+        {stats && stats.sourceStatus === 'alive' ? (
           <div className="flex items-center gap-2 px-3 py-1.5 rounded-md border border-emerald-500/40 bg-emerald-50/50 dark:bg-emerald-950/20 text-emerald-700 dark:text-emerald-300 text-xs">
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -1181,7 +998,7 @@ export default function HomePage() {
           </div>
         ) : null}
 
-        {stats && stats.cookieStatus === 'expired' ? (
+        {stats && stats.sourceStatus === 'expired' ? (
           <Card className="border-red-500 bg-red-50 dark:bg-red-950/30">
             <CardContent className="p-4 flex items-start gap-3">
               <div className="shrink-0 rounded-full bg-red-100 dark:bg-red-900 p-2 text-red-600 dark:text-red-300">
@@ -1196,7 +1013,7 @@ export default function HomePage() {
                   сайт platforma35 недоступен, либо изменился формат ответа.
                 </p>
                 <p className="text-xs text-red-500 dark:text-red-400 mt-2">
-                  Последняя успешная проверка: {fmtRelative(stats.cookieStatusAt)}
+                  Последняя успешная проверка: {fmtRelative(stats.sourceStatusAt)}
                 </p>
               </div>
             </CardContent>
@@ -1226,7 +1043,7 @@ export default function HomePage() {
             icon={<Activity className="w-4 h-4" />}
             label="Последний опрос"
             value={fmtRelative(stats?.lastRefreshAt ?? null)}
-            hint={stats?.cookieStatus === 'alive' ? 'источник: platforma35' : 'источник недоступен'}
+            hint={stats?.sourceStatus === 'alive' ? 'источник: platforma35' : 'источник недоступен'}
           />
         </div>
 
@@ -1253,15 +1070,15 @@ export default function HomePage() {
           <p>
             Дашборд мониторинга АЗС · данные{' '}
             <a
-              href="https://3d-geoportal.vologda-city.ru/portal/gasstation"
+              href="https://platforma35.ru/communal_economy/azs/"
               target="_blank"
               rel="noopener noreferrer"
               className="underline"
             >
-              3d-geoportal.vologda-city.ru
+              platforma35.ru
             </a>
           </p>
-          <p>Next.js + Prisma + SQLite · фундамент для масштабирования</p>
+          <p>Next.js + Prisma + SQLite · v1.0</p>
         </div>
       </footer>
     </div>

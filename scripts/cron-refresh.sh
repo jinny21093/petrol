@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 #
 # cron-refresh.sh — лёгкий скрипт для ручного запуска обновления данных
-# через cron. Сначала проверяет статус куки через /api/cookie-check
+# через cron. Сначала проверяет статус источника через /api/cookie-check
 # (лёгкий запрос), и только если кука жива — запускает полный опрос.
 #
 # Запуск вручную:
@@ -14,7 +14,7 @@
 # Почему сначала cookie-check:
 #   - Если кука протухла, /api/refresh всё равно сделает 9 запросов к геопорталу
 #     и только потом поймёт, что они вернули SupportESIA. Это лишний трафик и время.
-#   - /api/cookie-check делает ОДИН лёгкий GET к /api/info — мгновенно понимает,
+#   - /api/cookie-check делает ОДИН лёгкий GET к platforma35 — мгновенно понимает,
 #     жива ли кука.
 #   - Заодно heartbeat-запрос к /api/info может продлевать сессию (если геопортал
 #     это поддерживает) — многие Tomcat-сессии продлеваются от активности.
@@ -26,7 +26,7 @@ PORT="${PORT:-3000}"
 BASE="http://127.0.0.1:${PORT}"
 LOG_PREFIX="[cron-refresh $(date '+%Y-%m-%d %H:%M:%S')]"
 
-# -------- Шаг 1: heartbeat / проверка куки --------
+# -------- Шаг 1: heartbeat / проверка источника --------
 HEARTBEAT=$(curl -s -m 10 "${BASE}/api/cookie-check" 2>&1) || {
     echo "$LOG_PREFIX ERROR: heartbeat-запрос не выполнен: $HEARTBEAT"
     exit 1
@@ -41,20 +41,15 @@ except Exception:
     print('parse_error')
 " 2>&1)
 
-echo "$LOG_PREFIX cookie-status=$COOKIE_STATUS"
+echo "$LOG_PREFIX source-status=$COOKIE_STATUS"
 
-# Если кука протухла или не задана — не делаем полный опрос
+# Если источник недоступен — не делаем полный опрос
 if [[ "$COOKIE_STATUS" == "expired" ]]; then
-    echo "$LOG_PREFIX SKIP refresh: JSESSIONID протухла. Требуется ручное обновление через дашборд."
-    # TODO: добавить отправку в Telegram, если настроен бот
-    exit 0
-fi
-if [[ "$COOKIE_STATUS" == "not_set" ]]; then
-    echo "$LOG_PREFIX SKIP refresh: JSESSIONID не задана в настройках."
+    echo "$LOG_PREFIX SKIP refresh: platforma35.ru недоступен."
     exit 0
 fi
 if [[ "$COOKIE_STATUS" == "unknown" || "$COOKIE_STATUS" == "parse_error" ]]; then
-    echo "$LOG_PREFIX WARN: статус куки неизвестен, пробую опрос в любом случае..."
+    echo "$LOG_PREFIX WARN: статус источника неизвестен, пробую опрос в любом случае..."
 fi
 
 # -------- Шаг 2: полный опрос АЗС --------
@@ -70,8 +65,8 @@ try:
     if 'error' in d:
         print(f\"ERROR: {d['error']}\")
     else:
-        cs = d.get('cookieStatus', 'unknown')
-        print(f\"OK points={d.get('pointsProcessed',0)} found={d.get('stationsFound',0)} new={d.get('stationsNew',0)} updated={d.get('stationsUpdated',0)} errors={len(d.get('errors',[]))} cookie={cs}\")
+        cs = d.get('sourceStatus', 'unknown')
+        print(f\"OK points={d.get('pointsProcessed',0)} found={d.get('stationsFound',0)} new={d.get('stationsNew',0)} updated={d.get('stationsUpdated',0)} errors={len(d.get('errors',[]))} source={cs}\")
 except Exception as e:
     print(f\"PARSE_ERROR: {e}\")
 " 2>&1)

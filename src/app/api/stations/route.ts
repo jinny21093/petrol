@@ -1,19 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { db } from '@/lib/db'
-import { seedDefaultPoints } from '@/lib/seed'
 
 /**
  * GET /api/stations
  *   ?brand=Лукойл           — фильтр по бренду (case-insensitive, частичный match)
  *   ?status=Да              — фильтр по статусу
  *   ?includeHidden=false    — показывать ли скрытые (по умолчанию нет)
- *   ?latest=1               — для каждой станции вернуть только последний снапшот
  *
- * Возвращает массив станций с последним снапшотом.
+ * Возвращает массив станций с последним и предыдущим снапшотом (для трендов).
  */
 export async function GET(req: NextRequest) {
-  await seedDefaultPoints()
-
   const { searchParams } = new URL(req.url)
   const brand = searchParams.get('brand')?.trim()
   const status = searchParams.get('status')?.trim()
@@ -58,7 +54,6 @@ export async function GET(req: NextRequest) {
     return {
       id: s.id,
       externalId: s.externalId,
-      graphId: s.graphId,
       brand: s.brand,
       address: s.address,
       status: s.status,

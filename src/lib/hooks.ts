@@ -25,7 +25,6 @@ export interface StationSnapshot {
 export interface Station {
   id: string
   externalId: number
-  graphId: number | null
   brand: string
   address: string
   status: string
@@ -41,27 +40,14 @@ export interface Station {
   previousSnapshot: StationSnapshot | null
 }
 
-export interface CoveragePoint {
-  id: string
-  name: string
-  mapX: number
-  mapY: number
-  scale: number
-  enabled: boolean
-  createdAt: string
-  updatedAt: string
-}
-
 export interface Stats {
   totalStations: number
   activeStations: number
   hiddenStations: number
-  totalPoints: number
-  enabledPoints: number
   totalSnapshots: number
   lastRefreshAt: string | null
-  cookieStatus: 'alive' | 'expired' | 'not_set' | 'unknown'
-  cookieStatusAt: string | null
+  sourceStatus: 'alive' | 'expired' | 'unknown'
+  sourceStatusAt: string | null
   brands: { brand: string; count: number }[]
 }
 
@@ -73,7 +59,7 @@ export interface RefreshResult {
   errors: string[]
   startedAt: string
   finishedAt: string
-  cookieStatus: 'alive' | 'expired' | 'not_set' | 'unknown'
+  sourceStatus: 'alive' | 'expired' | 'unknown'
 }
 
 async function jfetch<T>(url: string, init?: RequestInit): Promise<T> {
@@ -108,63 +94,6 @@ export function useStations() {
   }, [reload])
 
   return { stations, loading, error, reload }
-}
-
-export function useCoverage() {
-  const [points, setPoints] = useState<CoveragePoint[]>([])
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
-
-  const reload = useCallback(async () => {
-    setLoading(true)
-    setError(null)
-    try {
-      const data = await jfetch<{ points: CoveragePoint[]; total: number }>('/api/coverage')
-      setPoints(data.points)
-    } catch (e) {
-      setError(e instanceof Error ? e.message : String(e))
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    reload()
-  }, [reload])
-
-  const create = useCallback(
-    async (p: { name: string; mapX: number; mapY: number; scale?: number }) => {
-      await jfetch('/api/coverage', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(p),
-      })
-      await reload()
-    },
-    [reload],
-  )
-
-  const update = useCallback(
-    async (id: string, p: Partial<CoveragePoint>) => {
-      await jfetch(`/api/coverage/${id}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(p),
-      })
-      await reload()
-    },
-    [reload],
-  )
-
-  const remove = useCallback(
-    async (id: string) => {
-      await jfetch(`/api/coverage/${id}`, { method: 'DELETE' })
-      await reload()
-    },
-    [reload],
-  )
-
-  return { points, loading, error, reload, create, update, remove }
 }
 
 export function useStats() {
@@ -204,41 +133,6 @@ export function useRefresh() {
   }, [])
 
   return { refreshing, refresh }
-}
-
-export function useSettings() {
-  const [settings, setSettings] = useState<{ jsessionId?: string }>({})
-  const [loading, setLoading] = useState(true)
-
-  const reload = useCallback(async () => {
-    setLoading(true)
-    try {
-      const r = await jfetch<{ settings: Record<string, string> }>('/api/settings')
-      setSettings({ jsessionId: r.settings.jsessionId })
-    } catch {
-      setSettings({})
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => {
-    reload()
-  }, [reload])
-
-  const save = useCallback(
-    async (jsessionId: string) => {
-      await jfetch('/api/settings', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ jsessionId }),
-      })
-      await reload()
-    },
-    [reload],
-  )
-
-  return { settings, loading, reload, save }
 }
 
 export interface StationHistoryPoint {

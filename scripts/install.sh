@@ -33,7 +33,6 @@
 #  10. Создаёт папку бэкапов + cron-бэкап БД на 14 дней
 #
 # После успешной установки откройте http(s)://<DOMAIN_OR_IP> в браузере.
-# JSESSIONID нужно будет вставить вручную через таб «Настройки».
 #
 
 set -euo pipefail
@@ -382,7 +381,7 @@ CRON_MARK_END="# <<< vologda-azs end <<<"
 if command -v crontab &> /dev/null; then
     # Удаляем старый блок между метками и добавляем новый
     # 3 задачи:
-    #   1) Каждые 5 минут — heartbeat: проверка куки (продлевает сессию, обновляет cookieStatus)
+    #   1) Каждые 5 минут — heartbeat: проверка доступности platforma35
     #   2) Каждые 10 минут — полный опрос АЗС (cron-refresh.sh сам делает cookie-check перед опросом)
     #   3) Каждый день в 03:00 — бэкап БД
     ( crontab -u "$RUN_USER" -l 2>/dev/null | sed "/$CRON_MARK_BEGIN/,/$CRON_MARK_END/d" ; \
@@ -393,7 +392,7 @@ if command -v crontab &> /dev/null; then
       echo "$CRON_MARK_END" \
     ) | crontab -u "$RUN_USER" -
     ok "  Cron настроен:"
-    ok "    • каждые 5 мин — heartbeat (продление сессии + проверка куки)"
+    ok "    • каждые 5 мин — heartbeat (проверка platforma35)"
     ok "    • каждые $REFRESH_INTERVAL_MIN мин — опрос АЗС"
     ok "    • ежедневно в 03:00 — бэкап БД"
 else
@@ -428,7 +427,7 @@ echo ""
 echo "  Следующие шаги:"
 echo "    1. Откройте $SITE_URL в браузере"
 echo "    2. Перейдите в таб «Настройки»"
-echo "    3. Вставьте JSESSIONID (как его получить — см. README.md)"
+echo "    3. Данные начнут подтягиваться автоматически через cron"
 echo "    4. Перейдите в таб «АЗС», нажмите «Обновить»"
 echo ""
 echo "  Полезные команды:"

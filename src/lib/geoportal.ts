@@ -1,5 +1,5 @@
 /**
- * Главный модуль опроса АЗС.
+ * Главный модуль опроса АЗС Вологды.
  *
  * Источник данных: публичный API platforma35.ru
  *   GET https://platforma35.ru/communal_economy/azs/api/markers/
@@ -8,16 +8,11 @@
  *   - уже структурированные данные (тип топлива → литры)
  *   - координаты, логотипы, история за день
  *
- * Историческая справка: раньше использовался геопортал
- * 3d-geoportal.vologda-city.ru, но он требовал ESIA-авторизацию
- * (Госуслуги) и кука JSESSIONID постоянно протухала. От геопортала
- * отказались в пользу platforma35.ru.
- *
  * Функции:
  *   - refreshAllStations() — главный цикл опроса, сохраняет снапшоты в БД
- *   - checkCookieStatus() — лёгкая проверка доступности источника
- *   - parseFuelDetails() — парсер сырого текста (используется в reparse-скриптах
- *     для старых данных, оставшихся с времён геопортала)
+ *   - checkSourceStatus() — лёгкая проверка доступности источника
+ *   - parseFuelDetails() — парсер сырого текста (legacy, для перепарсинга
+ *     старых снапшотов с геопортала; для свежих данных не нужен)
  */
 
 import { db } from '@/lib/db'
@@ -98,43 +93,40 @@ export interface RefreshResult {
   errors: string[]
   startedAt: Date
   finishedAt: Date
-  cookieStatus: CookieStatus
+  sourceStatus: SourceStatus
 }
 
 /**
- * Статус источника данных.
- * Исторически назывался cookieStatus (когда использовался геопортал с JSESSIONID).
- * Сейчас это просто индикатор доступности platforma35.ru:
+ * Статус источника данных (platforma35.ru).
  *   - 'alive'   — API доступен
  *   - 'expired' — API недоступен (упал, нет интернета, изменился формат)
- *   - 'not_set' — больше не используется (было: JSESSIONID не задана)
  *   - 'unknown' — не удалось определить
  */
-export type CookieStatus = 'alive' | 'expired' | 'not_set' | 'unknown'
+export type SourceStatus = 'alive' | 'expired' | 'unknown'
 
 // -------- Проверка доступности источника --------
 
 /**
  * Лёгкая проверка доступности platforma35.ru — делает один GET к API.
- * Сохраняет статус в Setting.cookieStatus + cookieStatusAt (для отображения в UI).
+ * Сохраняет статус в Setting.sourceStatus + sourceStatusAt (для отображения в UI).
  *
  * Cron дёргает этот endpoint каждые 5 минут — это и heartbeat, и индикатор
  * здоровья для баннера в дашборде.
  */
-export async function checkCookieStatus(): Promise<CookieStatus> {
+export async function checkSourceStatus(): Promise<SourceStatus> {
   try {
     const markers = await fetchAllPlatforma35()
     if (markers.length > 0) {
-      await saveSetting('cookieStatus', 'alive')
-      await saveSetting('cookieStatusAt', new Date().toISOString())
+      await saveSetting('sourceStatus', 'alive')
+      await saveSetting('sourceStatusAt', new Date().toISOString())
       return 'alive'
     }
-    await saveSetting('cookieStatus', 'expired')
-    await saveSetting('cookieStatusAt', new Date().toISOString())
+    await saveSetting('sourceStatus', 'expired')
+    await saveSetting('sourceStatusAt', new Date().toISOString())
     return 'expired'
   } catch {
-    await saveSetting('cookieStatus', 'expired')
-    await saveSetting('cookieStatusAt', new Date().toISOString())
+    await saveSetting('sourceStatus', 'expired')
+    await saveSetting('sourceStatusAt', new Date().toISOString())
     return 'expired'
   }
 }
@@ -153,7 +145,7 @@ export async function refreshAllStations(): Promise<RefreshResult> {
   let stationsFound = 0
   let stationsNew = 0
   let stationsUpdated = 0
-  const cookieStatus: CookieStatus = 'alive'
+  const sourceStatus: SourceStatus = 'alive'
 
   try {
     const markers = await fetchAllPlatforma35()
@@ -180,14 +172,14 @@ export async function refreshAllStations(): Promise<RefreshResult> {
       'lastRefreshSummary',
       JSON.stringify({ stationsFound, stationsNew, stationsUpdated, errorsCount: errors.length }),
     )
-    await saveSetting('cookieStatus', 'alive')
-    await saveSetting('cookieStatusAt', new Date().toISOString())
+    await saveSetting('sourceStatus', 'alive')
+    await saveSetting('sourceStatusAt', new Date().toISOString())
   } catch (e) {
     errors.push(
       `Ошибка получения данных с platforma35.ru: ${e instanceof Error ? e.message : String(e)}`,
     )
-    await saveSetting('cookieStatus', 'expired')
-    await saveSetting('cookieStatusAt', new Date().toISOString())
+    await saveSetting('sourceStatus', 'expired')
+    await saveSetting('sourceStatusAt', new Date().toISOString())
   }
 
   return {
@@ -198,7 +190,7 @@ export async function refreshAllStations(): Promise<RefreshResult> {
     errors,
     startedAt,
     finishedAt: new Date(),
-    cookieStatus,
+    sourceStatus,
   }
 }
 
@@ -248,7 +240,6 @@ async function processMarker(
     brand: marker.title || 'Без бренда',
     address: marker.address || '',
     status,
-    graphId: null,
     source: 'platforma35',
     longitude: marker.coordinates?.[0] ?? null,
     latitude: marker.coordinates?.[1] ?? null,

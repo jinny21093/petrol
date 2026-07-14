@@ -10,67 +10,47 @@ datasource db {
   provider = "sqlite"
 }
 
-/// Точка покрытия — координата центра области запроса к геопорталу.
-/// Несколько точек покрывают весь город / область. Масштабируемо: можно добавлять точки для новых районов.
-model CoveragePoint {
-  id        String   @id @default(cuid())
-  name      String   // человекочитаемое название (например, "Центр", "Заречье")
-  mapX      Float    // Web Mercator X в метрах
-  mapY      Float    // Web Mercator Y в метрах
-  scale     Float    @default(156093.8619923378)
-  enabled   Boolean  @default(true)
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@index([enabled])
-}
-
-/// АЗС, обнаруженная на геопортале или platforma35. Уникальна по externalId.
+/// АЗС с platforma35.ru. Уникальна по externalId (id маркера в API).
 model Station {
   id         String   @id @default(cuid())
-  externalId Int      @unique // id записи на источнике (id маркера platforma35 или геопортала)
-  graphId    Int?     // graphId с геопортала (для platforma35 = null)
+  externalId Int      @unique // id маркера на platforma35.ru (1-9)
   brand      String   @default("Неизвестно")
   address    String   @default("")
-  status     String   @default("Нет")        // "Да" — работает
-  /// Источник данных: 'platforma35' или 'geoportal'
-  source     String   @default("platforma35")
-  /// Координаты в WGS84 [lng, lat] — пришли от platforma35 (геопортал их не отдаёт)
-  longitude  Float?
-  latitude   Float?
-  /// URL логотипа бренда (от platforma35)
-  logoUrl    String?
-  /// Поле из platforma35: true если есть данные об остатках, false если АЗС не сообщает
-  availabilityFuel Boolean @default(false)
-  /// Поле из platforma35: true если ожидается/идёт подвоз топлива (fuel_delivery)
-  fuelDelivery     Boolean @default(false)
+  status     String   @default("Нет") // "Да" — АЗС сообщает об остатках
+  source     String   @default("platforma35") // источник данных (audit-поле)
+  longitude  Float?   // WGS84 (от platforma35)
+  latitude   Float?   // WGS84 (от platforma35)
+  logoUrl    String?  // URL логотипа бренда
+  availabilityFuel Boolean @default(false) // true = есть данные об остатках
+  fuelDelivery     Boolean @default(false) // true = ожидается/идёт подвоз
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
   snapshots  FuelSnapshot[]
-  hidden     Boolean  @default(false) // вручную скрытые станции
+  hidden     Boolean  @default(false)
 
   @@index([brand])
   @@index([status])
 }
 
-/// Снапшот остатков топлива на момент опроса. Один опрос = одна запись на АЗС.
-/// Хранит сырой текст деталей (6920) + распарсенные данные в JSON.
+/// Снапшот остатков топлива на момент опроса.
 model FuelSnapshot {
   id             String   @id @default(cuid())
   stationId      String
   station        Station  @relation(fields: [stationId], references: [id], onDelete: Cascade)
-  rawDetails     String   @default("") // поле 6920 — сырой текст с остатками и комментариями
-  parsedFuels    String   @default("[]") // JSON-массив: [{ fuel: "92", liters: 5000, cars: 250 }]
-  sourceCreatedAt   DateTime? // поле 6921 — время создания записи на геопортале
-  sourceUpdatedAt   DateTime? // поле 6922 — время обновления записи на геопортале
+  rawDetails     String   @default("") // HTML из info (platforma35) или текст (legacy)
+  parsedFuels    String   @default("[]") // JSON: {comment, commentDate, fuelDelivery, fuels: [...]}
+  sourceCreatedAt   DateTime? // время создания на источнике
+  sourceUpdatedAt   DateTime? // время обновления на источнике
   fetchedAt      DateTime @default(now()) // когда мы опросили
 
-  @@index([stationId, fetchedAt])
+  @@index([stationId, sourceUpdatedAt])
+  @@index([sourceUpdatedAt])
   @@index([fetchedAt])
 }
 
 /// Глобальные настройки системы (key-value).
+/// Ключи: lastRefreshAt, sourceStatus, sourceStatusAt
 model Setting {
   id    String @id
   value String @default("")

@@ -1,39 +1,34 @@
 import { NextResponse } from 'next/server'
-import { checkCookieStatus } from '@/lib/geoportal'
+import { checkSourceStatus } from '@/lib/geoportal'
 import { db } from '@/lib/db'
 
 /**
  * GET /api/cookie-check
  *
- * Лёгкий heartbeat-запрос: проверяет статус JSESSIONID без полного опроса АЗС.
- * Делает один GET к геопорталу /api/info и смотрит, есть ли в ответе SupportESIA.
+ * Лёгкий heartbeat-запрос: проверяет доступность platforma35.ru без
+ * полного опроса АЗС. Делает один GET к /api/markers/ и смотрит,
+ * вернулся ли непустой массив.
  *
  * Возвращает:
  * {
- *   status: 'alive' | 'expired' | 'not_set' | 'unknown',
- *   checkedAt: "ISO",
- *   jsessionIdMasked: "C751...5EEC" or null
+ *   status: 'alive' | 'expired' | 'unknown',
+ *   checkedAt: "ISO"
  * }
  *
  * Cron вызывает этот endpoint каждые 5 минут — это:
- *   1) обновляет cookieStatus в БД (для отображения в дашборде)
- *   2) возможно, продлевает сессию (если геопортал продлевает JSESSIONID от активности)
+ *   1) обновляет sourceStatus в БД (для отображения в дашборде)
+ *   2) не нагружает platforma35 лишними запросами (один GET вместо полного refresh)
+ *
+ * Историческое название route 'cookie-check' сохранено для совместимости
+ * с cron-скриптами. Раньше здесь проверялась JSESSIONID для геопортала.
  */
 export async function GET() {
-  const status = await checkCookieStatus()
+  const status = await checkSourceStatus()
 
-  // Достаём маскированную куку для отображения
-  const setting = await db.setting.findUnique({ where: { id: 'jsessionId' } })
-  const jsessionIdMasked = setting?.value
-    ? `${setting.value.slice(0, 4)}...${setting.value.slice(-4)}`
-    : null
-
-  // Достаём время последней проверки
-  const checkedAtSetting = await db.setting.findUnique({ where: { id: 'cookieStatusAt' } })
+  const checkedAtSetting = await db.setting.findUnique({ where: { id: 'sourceStatusAt' } })
 
   return NextResponse.json({
     status,
     checkedAt: checkedAtSetting?.value || new Date().toISOString(),
-    jsessionIdMasked,
   })
 }
